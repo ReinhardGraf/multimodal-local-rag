@@ -1,0 +1,1999 @@
+{
+  "name": "Multimodal RAG",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "084e7aa1-14f6-4ad3-b306-8464a88d8f28",
+      "name": "Scheduled Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3200,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/data/documents/**",
+        "options": {}
+      },
+      "id": "1bb1458d-e0b6-4395-956d-a269cda2c966",
+      "name": "Read Directory",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -2992,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "condition-pdf",
+              "leftValue": "={{ $json.fileName }}",
+              "rightValue": "/\\.(pdf|docx?|txt|rtf|odt|md|html?|pptx?)$/i",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "80d6a59f-2fe5-45fb-857f-1b70aaadab0e",
+      "name": "Filter Supported Files",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "const crypto = require('crypto');\n\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const binaryPropertyName = 'data';\n\n  try {\n    if (!item.binary || !item.binary[binaryPropertyName]) {\n      continue;\n    }\n\n    const fileBuffer = await this.helpers.getBinaryDataBuffer(i, binaryPropertyName);\n    const fileHash = crypto.createHash('md5').update(fileBuffer).digest('hex');\n    const binaryData = item.binary[binaryPropertyName];\n    const fileName = binaryData.fileName || 'unknown';\n\n    results.push({\n      json: {\n        fileName: fileName,\n        fileHash: fileHash,\n        fileSize: binaryData.fileSize || fileBuffer.length,\n        mimeType: binaryData.mimeType,\n        path: binaryData.directory + '/' + fileName,\n        extension: binaryData.fileExtension || fileName.split('.').pop().toLowerCase()\n      }\n    });\n  } catch (error) {\n    console.error(`Error processing item ${i}: ${error.message}`);\n  }\n}\n\nreturn results;"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "3cad12f5-eca1-4583-b313-eb519bd9d644",
+      "name": "File Hash Berechnen",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        -2528,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "file_hashes",
+          "mode": "list",
+          "cachedResultName": "file_hashes"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "0622ed4c-d005-43ab-ba37-724eaa8f1109",
+      "name": "Alle Bekannten Files Holen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -2304,
+        720
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "PVhJW9QiuO8g6Nr1",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileScan = $('File Hash Berechnen').all().map(i => i.json);\nconst dbRegistry = $('Alle Bekannten Files Holen').all().map(i => i.json);\n\nconst results = [];\n\nconst dbMap = new Map();\ndbRegistry.forEach(record => {\n  dbMap.set(record.file_path, record);\n});\n\nfor (const file of fileScan) {\n  const path = file.path;\n  const dbRecord = dbMap.get(path);\n\n  const normalizedItem = {\n    fileName: file.fileName ?? path.split('/').pop(),\n    fileHash: file.fileHash,\n    fileSize: file.fileSize,\n    mimeType: file.mimeType,\n    path: file.path,\n    extension: file.extension\n  };\n\n  if (!dbRecord) {\n    results.push({\n      json: {\n        type: \"new\",\n        item: normalizedItem\n      }\n    });\n  } else {\n    dbMap.delete(path);\n\n    if (file.fileHash === dbRecord.file_hash) {\n      results.push({\n        json: {\n          type: \"unchanged\",\n          item: normalizedItem\n        }\n      });\n    } else {\n      results.push({\n        json: {\n          type: \"modified\",\n          item: normalizedItem\n        }\n      });\n    }\n  }\n}\n\n// Remaining DB entries = deleted files\nfor (const [path, record] of dbMap) {\n  if (!path || path === '__setup_test__') continue;\n\n  const fileName = typeof path === 'string'\n    ? path.split('/').pop()\n    : null;\n\n  const extension = fileName && fileName.includes('.')\n    ? fileName.split('.').pop()\n    : null;\n\n  results.push({\n    json: {\n      type: \"deleted\",\n      item: {\n        fileName,\n        fileHash: record.file_hash ?? null,\n        fileSize: record.file_size ?? null,\n        mimeType: record.content_type ?? null,\n        path: record.file_path ?? null,\n        extension\n      }\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2064,
+        720
+      ],
+      "id": "35d95af3-0727-4dbf-a10c-9ff02d9db7bd",
+      "name": "Klassifizierung der Dateien"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "new",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "9d81b9d3-bfd7-4c89-8886-9e5c7a3dcebc"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "new"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b5c578b4-4dc7-461a-9398-cc82f810cfbc",
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "modified",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "modified"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9add1652-0d23-432d-b415-0d9960ba5f31",
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "unchanged",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "unchanged"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "835457ca-5cd9-4d37-9190-40b510183b7f",
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "deleted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "deleted"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -1792,
+        688
+      ],
+      "id": "fc93401f-df8d-4083-af38-9bb3fd01874d",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\n\nDELETE FROM document_images\nWHERE file_hash = (\n  SELECT file_hash\n  FROM file_hashes\n  WHERE file_path = '{{ $('Switch').item.json.item.path }}'\n);\n\nDELETE FROM file_hashes\nWHERE file_path = '{{ $('Switch').item.json.item.path }}';\n\nCOMMIT;",
+        "options": {}
+      },
+      "id": "14d3ab1c-a231-4315-924f-af3d26769e93",
+      "name": "Delete File Hash (DB)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -976,
+        1600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PVhJW9QiuO8g6Nr1",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.item.path }}",
+        "options": {}
+      },
+      "id": "3b8fe150-bcb4-4e95-8ec5-7f3675f29aed",
+      "name": "Re-Read File (New)",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -1248,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Switch').item.json.item.path }}",
+        "options": {}
+      },
+      "id": "c95875b1-47d7-443c-a7a9-13744d0d5573",
+      "name": "Re-Read File (Modified)",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -784,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "keep-path",
+              "name": "filePath",
+              "value": "={{ $('Switch').item.json.item.path }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-hash",
+              "name": "fileHash",
+              "value": "={{ $('Switch').item.json.item.fileHash }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-name",
+              "name": "fileName",
+              "value": "={{ $('Switch').item.json.item.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-ext",
+              "name": "extension",
+              "value": "={{ $('Switch').item.json.item.extension }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-mime",
+              "name": "mimeType",
+              "value": "={{ $('Switch').item.json.item.mimeType }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-size",
+              "name": "fileSize",
+              "value": "={{ $('Switch').item.json.item.fileSize }}",
+              "type": "string"
+            },
+            {
+              "id": "mode",
+              "name": "processingMode",
+              "value": "new",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d305a28c-bec9-4d5a-ab27-005c522d2ec7",
+      "name": "Set Metadata (New)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1024,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "/**\n * Extract & Chunk — Docling Hierarchical Chunking API\n *\n * 1. Sends the binary file to the Docling hierarchical chunking API endpoint.\n * 2. Processes the returned chunks to fit the original output format.\n * 3. Extracts pictures with captions/children text, stores images in PostgreSQL,\n *    and creates chunks with image references.\n * 4. Outputs one n8n item per chunk, each with full citation metadata.\n *\n * For plain text / markdown files, reads directly from binary data.\n */\n\nconst CHUNK_SIZE = 512;\nconst DOCLING_URL = 'http://host.docker.internal:5007/v1/chunk/hierarchical/file';\n\n// ── helpers ──────────────────────────────────────────────────\n\n/**\n * Resolve a JSON pointer reference like \"#/texts/3\" against the DoclingDocument.\n */\nfunction resolveRef(doc, cref) {\n  if (!cref) return null;\n  const parts = cref.replace(/^#\\//, '').split('/');\n  let obj = doc;\n  for (const p of parts) {\n    if (obj == null) return null;\n    const idx = Number(p);\n    obj = Number.isNaN(idx) ? obj[p] : obj[idx];\n  }\n  return obj;\n}\n\n/**\n * Extract caption / child text from a PictureItem.\n * Looks at captions, children, and meta.description.\n */\nfunction extractPictureText(doc, pictureItem) {\n  const textParts = [];\n\n  // 1. Captions (list of RefItems pointing to text items)\n  if (Array.isArray(pictureItem.captions)) {\n    for (const capRef of pictureItem.captions) {\n      const ref = capRef['$ref'] || capRef.cref;\n      if (!ref) continue;\n      const resolved = resolveRef(doc, ref);\n      if (resolved && resolved.text) {\n        textParts.push(resolved.text);\n      }\n    }\n  }\n\n  // 2. Children (list of RefItems that may point to text items)\n  if (Array.isArray(pictureItem.children)) {\n    for (const childRef of pictureItem.children) {\n      const ref = childRef['$ref'] || childRef.cref;\n      if (!ref) continue;\n      const resolved = resolveRef(doc, ref);\n      if (resolved && resolved.text && !textParts.includes(resolved.text)) {\n        textParts.push(resolved.text);\n      }\n    }\n  }\n\n  // 3. Meta description\n  if (pictureItem.meta && pictureItem.meta.description && pictureItem.meta.description.text) {\n    const descText = pictureItem.meta.description.text;\n    if (!textParts.includes(descText)) {\n      textParts.push(descText);\n    }\n  }\n\n  return textParts.join('\\n\\n').trim();\n}\n\n/**\n * Extract the base64 image data from a PictureItem's image field or embedded URI.\n * Returns { base64: string, mimetype: string } or null.\n */\nfunction extractImageData(pictureItem) {\n  if (!pictureItem.image) return null;\n\n  const uri = pictureItem.image.uri;\n  if (!uri) return null;\n\n  // Handle data URIs: \"data:image/png;base64,...\"\n  if (typeof uri === 'string' && uri.startsWith('data:')) {\n    const match = uri.match(/^data:([^;]+);base64,(.+)$/);\n    if (match) {\n      return {\n        mimetype: match[1],\n        base64: match[2],\n      };\n    }\n  }\n\n  return null;\n}\n\n/**\n * Store an image as BYTEA in PostgreSQL and return the generated image ID.\n * Expects a table: document_images(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n *   file_hash TEXT, picture_index INT, image_data BYTEA, mimetype TEXT,\n *   width INT, height INT, created_at TIMESTAMPTZ DEFAULT NOW())\n */\nasync function storeImageInPostgres(context, imageBase64, mimetype, fileHash, pictureIndex, width, height) {\n  // Use the PostgreSQL credential configured in n8n\n  const connectionString = `postgresql://n8n:n8n_password@postgres:5432/n8n_rag`;\n  \n\n  const { Client } = require('pg');\n  const client = new Client({\n    connectionString: connectionString,\n    ssl: false,\n  });\n\n  await client.connect();\n\n  try {\n    // Ensure the table exists\n    await client.query(`\n      CREATE TABLE IF NOT EXISTS document_images (\n        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n        file_hash TEXT NOT NULL,\n        picture_index INT NOT NULL,\n        image_data BYTEA NOT NULL,\n        mimetype TEXT NOT NULL,\n        width INT,\n        height INT,\n        created_at TIMESTAMPTZ DEFAULT NOW()\n      )\n    `);\n\n    // Check if this image already exists (idempotent)\n    const existing = await client.query(\n      'SELECT id FROM document_images WHERE file_hash = $1 AND picture_index = $2 LIMIT 1',\n      [fileHash, pictureIndex]\n    );\n\n    if (existing.rows.length > 0) {\n      return existing.rows[0].id;\n    }\n\n    // Decode base64 to binary buffer\n    const imageBuffer = Buffer.from(imageBase64, 'base64');\n\n    const insertResult = await client.query(\n      `INSERT INTO document_images (file_hash, picture_index, image_data, mimetype, width, height)\n       VALUES ($1, $2, $3, $4, $5, $6)\n       RETURNING id`,\n      [fileHash, pictureIndex, imageBuffer, mimetype, width || null, height || null]\n    );\n\n    return insertResult.rows[0].id;\n  } finally {\n    await client.end();\n  }\n}\n\n// ── main ─────────────────────────────────────────────────────\nconst results = [];\n\nfor (let idx = 0; idx < items.length; idx++) {\n  const item = items[idx];\n  const filePath  = item.json.filePath;\n  const fileHash  = item.json.fileHash;\n  const fileName  = item.json.fileName;\n  const extension = item.json.extension;\n  const mimeType  = item.json.mimeType;\n  const fileSize  = item.json.fileSize;\n  const processingMode = item.json.processingMode || 'new';\n  const fileId    = item.json.fileId;\n\n  try {\n    const binaryPropertyName = 'data';\n    const isPlainText = ['txt', 'md', 'rtf'].includes(extension);\n\n    let chunks = [];\n    let doclingDocument = null; // Will hold the full DoclingDocument for image extraction\n\n    if (isPlainText) {\n      // ── plain text: read directly from binary ──\n      const buf = await this.helpers.getBinaryDataBuffer(idx, binaryPropertyName);\n      const fullText = buf.toString('utf-8');\n      \n      // Create a single chunk for plain text\n      chunks = [{\n        text: fullText,\n        page_numbers: [1],\n        headings: [],\n        chunk_index: 0\n      }];\n    } else {\n      // ── structured docs: call Docling hierarchical chunking API ──\n      const buf = await this.helpers.getBinaryDataBuffer(idx, binaryPropertyName);\n\n      const FormData = require('form-data');\n      const form = new FormData();\n      form.append('files', buf, {\n        filename: fileName,\n        contentType: mimeType\n      });\n      \n      // Chunking parameters\n      form.append('chunking_max_tokens', CHUNK_SIZE.toString());\n      form.append('chunking_tokenizer', 'sentence-transformers/all-MiniLM-L6-v2');\n      form.append('chunking_merge_peers', 'true');\n      form.append('chunking_use_markdown_tables', 'false');\n      form.append('chunking_include_raw_text', 'false');\n      \n      // Conversion parameters\n      form.append('convert_ocr_engine', 'rapidocr');\n      form.append('include_converted_doc', 'true');\n\n      form.append('convert_include_images', 'true');\n      form.append('convert_image_export_mode', 'embedded');\n\n      form.append('convert_do_table_structure', 'true');\n\n      const response = await this.helpers.httpRequest({\n        method: 'POST',\n        url: DOCLING_URL,\n        body: form,\n        headers: form.getHeaders(),\n        returnFullResponse: true,\n        timeout: 120000\n      });\n\n      const body = typeof response === 'string'\n        ? JSON.parse(response)\n        : (response.body\n            ? (typeof response.body === 'string' ? JSON.parse(response.body) : response.body)\n            : response);\n\n      chunks = body.chunks || [];\n\n      // Extract the DoclingDocument from the response\n      // ChunkDocumentResponse has `documents: list[ExportResult]`\n      // Each ExportResult has `content: ExportDocumentResponse` with `json_content: DoclingDocument`\n      if (Array.isArray(body.documents) && body.documents.length > 0) {\n        const exportResult = body.documents[0];\n        if (exportResult.content && exportResult.content.json_content) {\n          doclingDocument = exportResult.content.json_content;\n        }\n      }\n    }\n\n    // ── process text chunks and emit items ──\n    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {\n      const chunk = chunks[chunkIdx];\n      const chunkText = chunk.text || '';\n      \n      if (!chunkText.trim()) continue;\n\n      // Extract page information from the page_numbers array\n      const pageNumbers = chunk.page_numbers || [1];\n      const pageNumber = pageNumbers.length > 0 ? Math.min(...pageNumbers) : 1;\n      \n      const contentType = isPlainText ? extension : (extension === 'pdf' ? 'pdf' : 'office');\n\n      let citationString;\n      if (contentType === 'pdf' || contentType === 'office') {\n        citationString = `[Source: ${fileName}, Page: ${pageNumber}]`;\n      } else {\n        citationString = `[Source: ${fileName}]`;\n      }\n\n      results.push({\n        json: {\n          text: chunkText,\n          metadata: {\n            source: filePath,\n            fileName: fileName,\n            page: pageNumber,\n            totalPages: 0,\n            chunk_index: chunk.chunk_index !== undefined ? chunk.chunk_index : chunkIdx,\n            chunk_in_page: 0,\n            contentType: contentType,\n            fileHash: fileHash,\n            fileSize: fileSize,\n            mimeType: mimeType,\n            citationString: citationString,\n            processingMode: processingMode,\n            fileId: fileId || null,\n            headings: chunk.headings || [],\n            page_numbers: pageNumbers,\n            isImage: false,\n          }\n        }\n      });\n    }\n\n    // ── process pictures from DoclingDocument ──\n    if (doclingDocument && Array.isArray(doclingDocument.pictures)) {\n      for (let picIdx = 0; picIdx < doclingDocument.pictures.length; picIdx++) {\n        const picture = doclingDocument.pictures[picIdx];\n\n        // Extract associated text (captions + children text)\n        const pictureText = extractPictureText(doclingDocument, picture);\n\n        // Skip pictures without any associated text\n        if (!pictureText) continue;\n\n        // Extract image binary data\n        const imageData = extractImageData(picture);\n\n\n        // Skip pictures without embedded image data\n        if (!imageData) continue;\n\n        // Determine page number from provenance\n        let picPageNumber = 1;\n        if (Array.isArray(picture.prov) && picture.prov.length > 0) {\n          picPageNumber = picture.prov[0].page_no || 1;\n        }\n\n        // Store the image in PostgreSQL\n        let imageId = null;\n        try {\n          const width = picture.image && picture.image.size ? picture.image.size.width : null;\n          const height = picture.image && picture.image.size ? picture.image.size.height : null;\n\n          imageId = await storeImageInPostgres(\n            this,\n            imageData.base64,\n            imageData.mimetype,\n            fileHash,\n            picIdx,\n            width,\n            height\n          );\n        } catch (dbError) {\n          console.warn(`Failed to store image ${picIdx} in PostgreSQL: ${dbError.message}`);\n          // Still create the chunk but without the image reference\n        }\n\n        const contentType = extension === 'pdf' ? 'pdf' : 'office';\n        const citationString = `[Source: ${fileName}, Page: ${picPageNumber}, Image: ${picIdx}]`;\n\n        // Build the text for embedding: prefix with \"[Image]\" so downstream\n        // consumers know this chunk describes a picture.\n        const embeddingText = `[Image] ${pictureText}`;\n\n        results.push({\n          json: {\n            text: embeddingText,\n            metadata: {\n              source: filePath,\n              fileName: fileName,\n              page: picPageNumber,\n              totalPages: 0,\n              chunk_index: chunks.length + picIdx, // offset after text chunks\n              chunk_in_page: 0,\n              contentType: contentType,\n              fileHash: fileHash,\n              fileSize: fileSize,\n              mimeType: mimeType,\n              citationString: citationString,\n              processingMode: processingMode,\n              fileId: fileId || null,\n              headings: [],\n              page_numbers: [picPageNumber],\n              isImage: true,\n              imageId: imageId, // UUID reference to document_images table\n              imageMimetype: imageData.mimetype,\n              pictureIndex: picIdx,\n              pictureLabel: picture.label || 'picture',\n            }\n          }\n        });\n      }\n    }\n\n    // If no chunks produced (empty file), emit a marker so DB still updates\n    if (results.length === 0 || (chunks.length === 0 && (!doclingDocument || !doclingDocument.pictures || doclingDocument.pictures.length === 0))) {\n      results.push({\n        json: {\n          text: '',\n          metadata: {\n            source: filePath,\n            fileName: fileName,\n            page: 0,\n            totalPages: 0,\n            chunk_index: 0,\n            contentType: extension,\n            fileHash: fileHash,\n            fileSize: fileSize,\n            mimeType: mimeType,\n            citationString: `[Source: ${fileName}]`,\n            processingMode: processingMode,\n            fileId: fileId || null,\n            empty: true\n          }\n        }\n      });\n    }\n  } catch (error) {\n    // On error, emit an error-marker so the pipeline continues\n    results.push({\n      json: {\n        text: '',\n        metadata: {\n          source: filePath,\n          fileName: fileName,\n          page: 0,\n          totalPages: 0,\n          chunk_index: 0,\n          contentType: extension,\n          fileHash: fileHash,\n          fileSize: fileSize,\n          mimeType: mimeType,\n          citationString: `[Source: ${fileName}]`,\n          processingMode: processingMode,\n          fileId: fileId || null,\n          error: error.message\n        }\n      }\n    });\n  }\n}\n\nreturn results;"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "be55a766-2f5c-46fc-90db-9c2b62bbdad9",
+      "name": "Extract & Chunk (New)",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        -576,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Aggregate chunk count per source file (New files) and prepare for DB INSERT.\n * Groups all chunks by source path and emits one item per file.\n */\nconst allItems = $('Aggregate 1').first().json.documents;\n\nconst fileMap = new Map();\nfor (const item of allItems) {\n  const meta = item.metadata || item;\n  const source = meta.source || item.source;\n  if (!fileMap.has(source)) {\n    fileMap.set(source, {\n      filePath: source,\n      fileHash: meta.fileHash || item.fileHash,\n      fileName: meta.fileName || item.fileName,\n      fileSize: meta.fileSize || item.fileSize || 0,\n      contentType: meta.contentType || meta.mimeType || 'unknown',\n      chunkCount: 0\n    });\n  }\n  fileMap.get(source).chunkCount++;\n}\n\nconst results = [];\nfor (const [, file] of fileMap) {\n  results.push({ json: file });\n}\nreturn results;"
+      },
+      "id": "c9ad3ecc-83ba-4114-970e-01ce0ae5854d",
+      "name": "Aggregate Per File (New)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO file_hashes (file_path, file_hash, chunk_count, file_size, content_type, processed_at)\nVALUES (\n  '{{ $json.filePath }}',\n  '{{ $json.fileHash }}',\n  {{ $json.chunkCount }},\n  '{{ $json.fileSize }}',\n  '{{ $json.contentType }}',\n  NOW()\n)\nON CONFLICT (file_path) DO UPDATE SET\n  file_hash = EXCLUDED.file_hash,\n  chunk_count = EXCLUDED.chunk_count,\n  file_size = EXCLUDED.file_size,\n  content_type = EXCLUDED.content_type,\n  processed_at = NOW(),\n  last_error = NULL;",
+        "options": {}
+      },
+      "id": "1c475360-f3db-46ea-9f90-737c59372f4e",
+      "name": "Upsert File Hash (New)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        512,
+        544
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PVhJW9QiuO8g6Nr1",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE file_hashes SET\n  file_hash = '{{ $json.fileHash }}',\n  chunk_count = {{ $json.chunkCount }},\n  file_size = '{{ $json.fileSize }}',\n  content_type = '{{ $json.contentType }}',\n  processed_at = NOW(),\n  last_error = NULL\nWHERE file_path = '{{ $json.filePath }}';",
+        "options": {}
+      },
+      "id": "1f6dd6e8-6161-46f4-ba0c-e1369149b8c8",
+      "name": "Update File Hash (Modified)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        848,
+        992
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PVhJW9QiuO8g6Nr1",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -784,
+        544
+      ],
+      "id": "cc83969c-4da4-4b6e-8452-05635a4f1244",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c4503b76-19f9-480c-b3f3-cbc3183cfbd9",
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        -352,
+        544
+      ],
+      "id": "d3ed71a0-50f0-4d5e-af17-86466eb12014",
+      "name": "Filter leere Chunks"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-chat",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "9f273ade-4ff8-4ab7-8f3a-ed84b8817c8e",
+      "name": "Open WebUI Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -3216,
+        2304
+      ],
+      "webhookId": "rag-chat-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2KglZULVzMQTKaCT",
+          "name": "Auth 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-query",
+              "name": "userQuery",
+              "value": "={{ $json.body.chatInput }}",
+              "type": "string"
+            },
+            {
+              "id": "session-id",
+              "name": "sessionId",
+              "value": "={{ $json.body.sessionId }}",
+              "type": "string"
+            },
+            {
+              "id": "conversation-history",
+              "name": "conversationHistory",
+              "value": "={{ $json.body.chat_history }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1909f040-7cca-46d3-b15f-b5c504722e22",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2896,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "search-required",
+              "leftValue": "={{ $json.requiresSearch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "06a4e944-d05b-40be-96d8-41f98e4ef858",
+      "name": "Search Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2128,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "/**\n * Context Assembly with Image Markers\n * \n * Formats retrieved documents with citation metadata AND\n * tracks which chunks have associated images. Instructs the LLM\n * to place image markers inline so images appear contextually.\n */\n\nconst items = this.getInputData();\nconst rerankedResults = items[0].json.results || [];\nconst userQuery = items[0].json.userQuery;\n\n// Build citation-formatted context and track images\nlet contextBlocks = [];\nlet imageMap = {}; // imageId -> { citation, chunkText }\n\nlet i = 0\nfor (const result of rerankedResults) {\n  const meta = result.metadata;\n  \n  // Build human-readable citation based on content type\n  let citation = '';\n  if (meta.contentType === 'pdf' && meta.page) {\n    citation = `[Quelle: ${meta.source}, Seite: ${meta.page}]`;\n  } else if (meta.contentType === 'spreadsheet' && meta.sheetName) {\n    citation = `[Quelle: ${meta.source}, Sheet: ${meta.sheetName}, Zeile: ${meta.row}]`;\n  } else if (meta.paragraph) {\n    citation = `[Quelle: ${meta.source}, Paragraph: ${meta.paragraph}]`;\n  } else {\n    citation = `[Quelle: ${meta.source}]`;\n  }\n  \n  // Check if this chunk has an associated image\n  const hasImage = !!meta.imageId;\n  let imageInstruction = '';\n  \n  if (hasImage) {\n    imageMap[meta.imageId] = {\n      citation: citation,\n      page: meta.page,\n      fileName: meta.fileName,\n      fileHash: meta.fileHash\n    };\n    imageInstruction = `\\n⚠️ THIS CHUNK HAS AN ASSOCIATED IMAGE. Image marker: [IMAGE:${meta.imageId}]. Add that to the response`;\n  }\n  \n  // Format the context block\n  const block = `[ID: ${i}] ${citation}\\nContent: ${result.text}${imageInstruction}\\n`;\n  contextBlocks.push(block);\n\n  i++;\n}\n\n// Join all context blocks\nconst assembledContext = contextBlocks.join('\\n---\\n\\n');\n\n// Collect all image IDs for later retrieval\nconst imageIds = Object.keys(imageMap);\n\n// Build image placement instructions only if there are images\nlet imageInstructions = '';\nif (imageIds.length > 0) {\n  imageInstructions = `\n\nIMAGE PLACEMENT RULES:\n- Some context chunks have associated images marked with [IMAGE:uuid].\n- When you use information from a chunk that has an image, you MUST place the exact image marker tag on its OWN line at the most contextually relevant position in your response.\n- Place the image marker IMMEDIATELY AFTER the sentence or paragraph that describes or references what the image shows.\n- Do NOT place all images at the end. Each image marker must appear inline, close to the related text.\n- Do NOT modify the image marker format. Use it exactly as provided: [IMAGE:uuid]\n- If a chunk has an image but you don't use that chunk's content, do NOT include its image marker.\n\nAvailable image markers:\n${imageIds.map(id => `- [IMAGE:${id}] (from ${imageMap[id].citation})`).join('\\n')}`;\n}\n\nreturn [{\n  json: {\n    ...items[0].json,\n    assembledContext: assembledContext,\n    imageInstructions: imageInstructions,\n    imageMap: imageMap,\n    imageIds: imageIds,\n    contextMetadata: {\n      blockCount: contextBlocks.length,\n      totalChars: assembledContext.length,\n      sources: [...new Set(rerankedResults.map(r => r.metadata.fileName))],\n      imageCount: imageIds.length\n    }\n  }\n}];"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "bc919d4f-6428-4ec7-b2bd-8bcbeb183392",
+      "name": "Context Assembly",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        -1488,
+        2288
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "f2f76879-39ce-423c-af0a-c452ec227750",
+      "name": "Merge Responses",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -80,
+        2288
+      ],
+      "alwaysOutputData": false,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "/**\n * Format Response for Open WebUI\n * \n * Structures the final response (with inline images already embedded)\n * in OpenAI-compatible format that Open WebUI expects.\n */\n\nconst items = this.getInputData();\nconst response = items[0].json.generatedResponse || items[0].json.text;\nconst sessionId = items[0].json.sessionId;\nconst searchPerformed = items[0].json.searchPerformed !== false;\nconst contextMetadata = items[0].json.contextMetadata;\nconst imageEmbeddingMetadata = items[0].json.imageEmbeddingMetadata || {};\n\n// Build sources array for transparency\nlet sources = [];\nif (contextMetadata && contextMetadata.sources) {\n  sources = contextMetadata.sources;\n}\n\n// OpenAI-compatible response format\nconst openAIResponse = {\n  id: `chatcmpl-${Date.now()}`,\n  object: 'chat.completion',\n  created: Math.floor(Date.now() / 1000),\n  model: 'local-rag-llama3.1',\n  output: response,\n  usage: {\n    prompt_tokens: 0,\n    completion_tokens: 0,\n    total_tokens: 0\n  },\n  // Custom metadata for Open WebUI\n  metadata: {\n    session_id: sessionId,\n    search_performed: searchPerformed,\n    sources_used: sources,\n    images_embedded: imageEmbeddingMetadata.imagesEmbedded || 0,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn [{\n  json: openAIResponse\n}];"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "c0ee39d4-215b-457e-b765-3fe2d7d60f61",
+      "name": "Format for Open WebUI",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        144,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "X-Session-ID",
+                "value": "={{ $('Parse Request').first().json.sessionId }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8e3f10c1-a59b-4a1f-9d0c-43e7ab9b1118",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        352,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## RAG Retrieval Workflow",
+        "height": 1108,
+        "width": 3956,
+        "color": 4
+      },
+      "id": "4be9f267-7a0e-444b-a002-04320f1a98de",
+      "name": "Workflow Info1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3312,
+        1952
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b0546c94-6115-428f-a7ed-b126c1f9f68e",
+              "leftValue": "={{ $('Context Assembly').item.json.imageIds }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -720,
+        2288
+      ],
+      "id": "eebf23e7-1bd3-4475-857d-b26c64a67492",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "/**\n * Fetch Images from Postgres\n * \n * Retrieves image data for all imageIds found in the reranked chunks.\n * Converts BYTEA image data to base64 for embedding in markdown.\n */\n\nconst { Client } = require('pg');\n\nconst items = this.getInputData();\nconst imageIds = items[0].json.imageIds || [];\n\n// If no images needed, pass through\nif (imageIds.length === 0) {\n  return [{\n    json: {\n      ...items[0].json,\n      imageData: {}\n    }\n  }];\n}\n\nconst connectionString = `postgresql://n8n:n8n_password@postgres:5432/n8n_rag`;\n  \nconst client = new Client({\n  connectionString: connectionString,\n  ssl: false,\n});\n\ntry {\n  await client.connect();\n  \n  // Query all needed images in a single round-trip\n  const placeholders = imageIds.map((_, i) => `$${i + 1}`).join(', ');\n  const query = `\n    SELECT id, image_data, mimetype, width, height\n    FROM document_images\n    WHERE id IN (${placeholders})\n  `;\n  \n  const result = await client.query(query, imageIds);\n  \n  // Build a map: imageId -> base64 data\n  const imageData = {};\n  for (const row of result.rows) {\n    const base64 = Buffer.isBuffer(row.image_data) \n      ? row.image_data.toString('base64')\n      : Buffer.from(row.image_data).toString('base64');\n    \n    imageData[row.id] = {\n      base64: base64,\n      mimetype: row.mimetype || 'image/png',\n      width: row.width,\n      height: row.height\n    };\n  }\n  \n  await client.end();\n  \n  return [{\n    json: {\n      ...items[0].json,\n      imageData: imageData,\n      imagesFetched: Object.keys(imageData).length\n    }\n  }];\n  \n} catch (error) {\n  try { await client.end(); } catch (e) {}\n  \n  // On error, continue without images rather than failing the whole workflow\n  return [{\n    json: {\n      ...items[0].json,\n      imageData: {},\n      imagesFetched: 0,\n      imageFetchError: error.message\n    }\n  }];\n}"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "d2e298da-64d4-4ff6-9de5-c9a81d70b65a",
+      "name": "Retrieve Images",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        -496,
+        2128
+      ]
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "/**\n * Replace Image Markers with Inline Base64 Images\n * \n * Scans the LLM response for [IMAGE:uuid] markers and replaces them\n * with markdown-embedded base64 images. This ensures images appear\n * inline at contextually relevant positions in the response.\n */\n\nconst items = this.getInputData();\nconst generatedResponse = items[0].json.generatedResponse || '';\nconst imageData = items[0].json.imageData || {};\nconst imageMap = items[0].json.imageMap || {};\n\nlet finalResponse = generatedResponse;\nlet imagesEmbedded = 0;\nlet imagesNotFound = 0;\n\n// Find all [IMAGE:uuid] markers in the response\nconst imageMarkerRegex = /\\[IMAGE:([a-f0-9-]{36})\\]/gi;\n\nfinalResponse = generatedResponse.replace(imageMarkerRegex, (match, imageId) => {\n  const imgData = imageData[imageId];\n  const imgMeta = imageMap[imageId];\n  \n  if (!imgData) {\n    // Image not found in DB — remove the marker cleanly\n    imagesNotFound++;\n    return '';\n  }\n  \n  imagesEmbedded++;\n  \n  // Build alt text from metadata\n  const altText = imgMeta \n    ? `Bild von ${imgMeta.fileName}${imgMeta.page ? ', Page ' + imgMeta.page : ''}`\n    : `Dokument-Bild`;\n  \n  // Create markdown image with base64 data URI\n  // Open WebUI supports inline base64 images in markdown\n  const markdownImage = `\\n\\n![${altText}](data:${imgData.mimetype};base64,${imgData.base64})\\n\\n`;\n  \n  return markdownImage;\n});\n\n// Clean up any double blank lines that might result from replacements\nfinalResponse = finalResponse.replace(/\\n{4,}/g, '\\n\\n\\n');\n\nreturn [{\n  json: {\n    ...items[0].json,\n    generatedResponse: finalResponse,\n    imageEmbeddingMetadata: {\n      imagesEmbedded: imagesEmbedded,\n      imagesNotFound: imagesNotFound,\n      totalMarkersFound: imagesEmbedded + imagesNotFound\n    }\n  }\n}];"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "28866b9d-3a4c-4709-bdaa-d4e331344f14",
+      "name": "Replace Image Placeholders",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        -304,
+        2128
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5acb6a52-8bc3-4db3-a083-ecc8af2b8783",
+              "name": "imageIds",
+              "value": "={{ $('Context Assembly').item.json.imageIds }}",
+              "type": "array"
+            },
+            {
+              "id": "f9b9f8f9-6293-4bca-9b68-7f89403e17bd",
+              "name": "generatedResponse",
+              "value": "={{ $json.response || \"Darauf habe ich leider keine Antwort. Bitte formmuliere deine Frage um.\" }}",
+              "type": "string"
+            },
+            {
+              "id": "79a8573f-46ed-4893-95ce-57a81f8d1319",
+              "name": "imageMap",
+              "value": "={{ $('Context Assembly').item.json.imageMap }}",
+              "type": "object"
+            },
+            {
+              "id": "da31f220-21d0-4312-8164-6f94e3a46146",
+              "name": "contextMetadata",
+              "value": "={{ $('Context Assembly').item.json.contextMetadata }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -944,
+        2288
+      ],
+      "id": "3beb382b-06ab-421c-ba65-32acc5c75a56",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "content": "## RAG Ingestion Workflow",
+        "height": 1556,
+        "width": 4412,
+        "color": 6
+      },
+      "id": "3c81fcb8-fdf9-4ecf-ba58-3e2fa78a2395",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3296,
+        256
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5008/v1/vector-store/upsert",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "collection_name",
+              "value": "documents"
+            },
+            {
+              "name": "documents",
+              "value": "={{ $json.documents }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        96,
+        544
+      ],
+      "id": "7808f6bb-ea6e-40b5-a82c-4d8e3055792e",
+      "name": "HTTP Request",
+      "executeOnce": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -1248,
+        1312
+      ],
+      "id": "3dedcb0c-f936-4173-a23a-061c16cd3767",
+      "name": "Ende"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/documents/points/delete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"source\",\n        \"match\": {\n          \"value\": \"{{ $json.item.path }}\"\n        }\n      }\n    ]\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "6eaaf4e4-9764-4d50-86c1-042899179877",
+      "name": "Alte Vektoren Löschen 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1248,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/documents/points/delete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"source\",\n        \"match\": {\n          \"value\": \"{{ $json.item.path }}\"\n        }\n      }\n    ]\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "ec9ad20f-196c-43b8-9f0e-ea7c9386093f",
+      "name": "Alte Vektoren löschen 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1248,
+        1008
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\n\nDELETE FROM document_images\nWHERE file_hash = (\n  SELECT file_hash\n  FROM file_hashes\n  WHERE file_path = '{{ $('Switch').item.json.item.path }}'\n);\n\nCOMMIT;",
+        "options": {}
+      },
+      "id": "bd1a5040-3292-4d98-92a1-075f122ce4a9",
+      "name": "Delete Image Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -1008,
+        1008
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "PVhJW9QiuO8g6Nr1",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "keep-path",
+              "name": "filePath",
+              "value": "={{ $('Switch').item.json.item.path }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-hash",
+              "name": "fileHash",
+              "value": "={{ $('Switch').item.json.item.fileHash }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-name",
+              "name": "fileName",
+              "value": "={{ $('Switch').item.json.item.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-ext",
+              "name": "extension",
+              "value": "={{ $('Switch').item.json.item.extension }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-mime",
+              "name": "mimeType",
+              "value": "={{ $('Switch').item.json.item.mimeType }}",
+              "type": "string"
+            },
+            {
+              "id": "keep-size",
+              "name": "fileSize",
+              "value": "={{ $('Switch').item.json.item.fileSize }}",
+              "type": "string"
+            },
+            {
+              "id": "mode",
+              "name": "processingMode",
+              "value": "new",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d257aa9d-3bc3-47f7-8272-cdbc5ba1b62f",
+      "name": "Set Metadata (New)1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -544,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -320,
+        992
+      ],
+      "id": "a9873424-9f79-4c74-a0c0-2f01877f53d1",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c4503b76-19f9-480c-b3f3-cbc3183cfbd9",
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        80,
+        992
+      ],
+      "id": "be4d62c1-1c1a-45fb-89f0-3f070503aefa",
+      "name": "Filter leere Chunks1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5008/v1/vector-store/upsert",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "collection_name",
+              "value": "documents"
+            },
+            {
+              "name": "documents",
+              "value": "={{ $json.documents }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        480,
+        992
+      ],
+      "id": "3150934e-6230-44df-a177-10fd270edf49",
+      "name": "HTTP Request2",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Aggregate chunk count per source file (modified files) and prepare for DB INSERT.\n * Groups all chunks by source path and emits one item per file.\n */\nconst allItems = $('Aggregate 2').first().json.documents;\n\nconst fileMap = new Map();\nfor (const item of allItems) {\n  const meta = item.metadata || item;\n  const source = meta.source || item.source;\n  if (!fileMap.has(source)) {\n    fileMap.set(source, {\n      filePath: source,\n      fileHash: meta.fileHash || item.fileHash,\n      fileName: meta.fileName || item.fileName,\n      fileSize: meta.fileSize || item.fileSize || 0,\n      contentType: meta.contentType || meta.mimeType || 'unknown',\n      chunkCount: 0\n    });\n  }\n  fileMap.get(source).chunkCount++;\n}\n\nconst results = [];\nfor (const [, file] of fileMap) {\n  results.push({ json: file });\n}\nreturn results;"
+      },
+      "id": "d5f436c7-a023-42bb-9c7b-0064cd2afe23",
+      "name": "Aggregate Per File (Modified)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "documents",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        544
+      ],
+      "id": "cdf31737-9b46-46a1-a90a-f7395cbf9762",
+      "name": "Aggregate 1"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "documents",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        288,
+        992
+      ],
+      "id": "f52ef399-9805-41c9-a8bd-8d46dce51f45",
+      "name": "Aggregate 2"
+    },
+    {
+      "parameters": {
+        "code": {
+          "execute": {
+            "code": "/**\n * Extract & Chunk — Docling Hierarchical Chunking API\n *\n * 1. Sends the binary file to the Docling hierarchical chunking API endpoint.\n * 2. Processes the returned chunks to fit the original output format.\n * 3. Extracts pictures with captions/children text, stores images in PostgreSQL,\n *    and creates chunks with image references.\n * 4. Outputs one n8n item per chunk, each with full citation metadata.\n *\n * For plain text / markdown files, reads directly from binary data.\n */\n\nconst CHUNK_SIZE = 512;\nconst DOCLING_URL = 'http://host.docker.internal:5007/v1/chunk/hierarchical/file';\n\n// ── helpers ──────────────────────────────────────────────────\n\n/**\n * Resolve a JSON pointer reference like \"#/texts/3\" against the DoclingDocument.\n */\nfunction resolveRef(doc, cref) {\n  if (!cref) return null;\n  const parts = cref.replace(/^#\\//, '').split('/');\n  let obj = doc;\n  for (const p of parts) {\n    if (obj == null) return null;\n    const idx = Number(p);\n    obj = Number.isNaN(idx) ? obj[p] : obj[idx];\n  }\n  return obj;\n}\n\n/**\n * Extract caption / child text from a PictureItem.\n * Looks at captions, children, and meta.description.\n */\nfunction extractPictureText(doc, pictureItem) {\n  const textParts = [];\n\n  // 1. Captions (list of RefItems pointing to text items)\n  if (Array.isArray(pictureItem.captions)) {\n    for (const capRef of pictureItem.captions) {\n      const ref = capRef['$ref'] || capRef.cref;\n      if (!ref) continue;\n      const resolved = resolveRef(doc, ref);\n      if (resolved && resolved.text) {\n        textParts.push(resolved.text);\n      }\n    }\n  }\n\n  // 2. Children (list of RefItems that may point to text items)\n  if (Array.isArray(pictureItem.children)) {\n    for (const childRef of pictureItem.children) {\n      const ref = childRef['$ref'] || childRef.cref;\n      if (!ref) continue;\n      const resolved = resolveRef(doc, ref);\n      if (resolved && resolved.text && !textParts.includes(resolved.text)) {\n        textParts.push(resolved.text);\n      }\n    }\n  }\n\n  // 3. Meta description\n  if (pictureItem.meta && pictureItem.meta.description && pictureItem.meta.description.text) {\n    const descText = pictureItem.meta.description.text;\n    if (!textParts.includes(descText)) {\n      textParts.push(descText);\n    }\n  }\n\n  return textParts.join('\\n\\n').trim();\n}\n\n/**\n * Extract the base64 image data from a PictureItem's image field or embedded URI.\n * Returns { base64: string, mimetype: string } or null.\n */\nfunction extractImageData(pictureItem) {\n  if (!pictureItem.image) return null;\n\n  const uri = pictureItem.image.uri;\n  if (!uri) return null;\n\n  // Handle data URIs: \"data:image/png;base64,...\"\n  if (typeof uri === 'string' && uri.startsWith('data:')) {\n    const match = uri.match(/^data:([^;]+);base64,(.+)$/);\n    if (match) {\n      return {\n        mimetype: match[1],\n        base64: match[2],\n      };\n    }\n  }\n\n  return null;\n}\n\n/**\n * Store an image as BYTEA in PostgreSQL and return the generated image ID.\n * Expects a table: document_images(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n *   file_hash TEXT, picture_index INT, image_data BYTEA, mimetype TEXT,\n *   width INT, height INT, created_at TIMESTAMPTZ DEFAULT NOW())\n */\nasync function storeImageInPostgres(context, imageBase64, mimetype, fileHash, pictureIndex, width, height) {\n  // Use the PostgreSQL credential configured in n8n\n  const connectionString = `postgresql://n8n:n8n_password@postgres:5432/n8n_rag`;\n  \n\n  const { Client } = require('pg');\n  const client = new Client({\n    connectionString: connectionString,\n    ssl: false,\n  });\n\n  await client.connect();\n\n  try {\n    // Ensure the table exists\n    await client.query(`\n      CREATE TABLE IF NOT EXISTS document_images (\n        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n        file_hash TEXT NOT NULL,\n        picture_index INT NOT NULL,\n        image_data BYTEA NOT NULL,\n        mimetype TEXT NOT NULL,\n        width INT,\n        height INT,\n        created_at TIMESTAMPTZ DEFAULT NOW()\n      )\n    `);\n\n    // Check if this image already exists (idempotent)\n    const existing = await client.query(\n      'SELECT id FROM document_images WHERE file_hash = $1 AND picture_index = $2 LIMIT 1',\n      [fileHash, pictureIndex]\n    );\n\n    if (existing.rows.length > 0) {\n      return existing.rows[0].id;\n    }\n\n    // Decode base64 to binary buffer\n    const imageBuffer = Buffer.from(imageBase64, 'base64');\n\n    const insertResult = await client.query(\n      `INSERT INTO document_images (file_hash, picture_index, image_data, mimetype, width, height)\n       VALUES ($1, $2, $3, $4, $5, $6)\n       RETURNING id`,\n      [fileHash, pictureIndex, imageBuffer, mimetype, width || null, height || null]\n    );\n\n    return insertResult.rows[0].id;\n  } finally {\n    await client.end();\n  }\n}\n\n// ── main ─────────────────────────────────────────────────────\nconst results = [];\n\nfor (let idx = 0; idx < items.length; idx++) {\n  const item = items[idx];\n  const filePath  = item.json.filePath;\n  const fileHash  = item.json.fileHash;\n  const fileName  = item.json.fileName;\n  const extension = item.json.extension;\n  const mimeType  = item.json.mimeType;\n  const fileSize  = item.json.fileSize;\n  const processingMode = item.json.processingMode || 'new';\n  const fileId    = item.json.fileId;\n\n  try {\n    const binaryPropertyName = 'data';\n    const isPlainText = ['txt', 'md', 'rtf'].includes(extension);\n\n    let chunks = [];\n    let doclingDocument = null; // Will hold the full DoclingDocument for image extraction\n\n    if (isPlainText) {\n      // ── plain text: read directly from binary ──\n      const buf = await this.helpers.getBinaryDataBuffer(idx, binaryPropertyName);\n      const fullText = buf.toString('utf-8');\n      \n      // Create a single chunk for plain text\n      chunks = [{\n        text: fullText,\n        page_numbers: [1],\n        headings: [],\n        chunk_index: 0\n      }];\n    } else {\n      // ── structured docs: call Docling hierarchical chunking API ──\n      const buf = await this.helpers.getBinaryDataBuffer(idx, binaryPropertyName);\n\n      const FormData = require('form-data');\n      const form = new FormData();\n      form.append('files', buf, {\n        filename: fileName,\n        contentType: mimeType\n      });\n      \n      // Chunking parameters\n      form.append('chunking_max_tokens', CHUNK_SIZE.toString());\n      form.append('chunking_tokenizer', 'sentence-transformers/all-MiniLM-L6-v2');\n      form.append('chunking_merge_peers', 'true');\n      form.append('chunking_use_markdown_tables', 'false');\n      form.append('chunking_include_raw_text', 'false');\n      \n      // Conversion parameters\n      form.append('convert_ocr_engine', 'rapidocr');\n      form.append('include_converted_doc', 'true');\n\n      form.append('convert_include_images', 'true');\n      form.append('convert_image_export_mode', 'embedded');\n\n      form.append('convert_do_table_structure', 'true');\n\n      const response = await this.helpers.httpRequest({\n        method: 'POST',\n        url: DOCLING_URL,\n        body: form,\n        headers: form.getHeaders(),\n        returnFullResponse: true,\n        timeout: 120000\n      });\n\n      const body = typeof response === 'string'\n        ? JSON.parse(response)\n        : (response.body\n            ? (typeof response.body === 'string' ? JSON.parse(response.body) : response.body)\n            : response);\n\n      chunks = body.chunks || [];\n\n      // Extract the DoclingDocument from the response\n      // ChunkDocumentResponse has `documents: list[ExportResult]`\n      // Each ExportResult has `content: ExportDocumentResponse` with `json_content: DoclingDocument`\n      if (Array.isArray(body.documents) && body.documents.length > 0) {\n        const exportResult = body.documents[0];\n        if (exportResult.content && exportResult.content.json_content) {\n          doclingDocument = exportResult.content.json_content;\n        }\n      }\n    }\n\n    // ── process text chunks and emit items ──\n    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {\n      const chunk = chunks[chunkIdx];\n      const chunkText = chunk.text || '';\n      \n      if (!chunkText.trim()) continue;\n\n      // Extract page information from the page_numbers array\n      const pageNumbers = chunk.page_numbers || [1];\n      const pageNumber = pageNumbers.length > 0 ? Math.min(...pageNumbers) : 1;\n      \n      const contentType = isPlainText ? extension : (extension === 'pdf' ? 'pdf' : 'office');\n\n      let citationString;\n      if (contentType === 'pdf' || contentType === 'office') {\n        citationString = `[Source: ${fileName}, Page: ${pageNumber}]`;\n      } else {\n        citationString = `[Source: ${fileName}]`;\n      }\n\n      results.push({\n        json: {\n          text: chunkText,\n          metadata: {\n            source: filePath,\n            fileName: fileName,\n            page: pageNumber,\n            totalPages: 0,\n            chunk_index: chunk.chunk_index !== undefined ? chunk.chunk_index : chunkIdx,\n            chunk_in_page: 0,\n            contentType: contentType,\n            fileHash: fileHash,\n            fileSize: fileSize,\n            mimeType: mimeType,\n            citationString: citationString,\n            processingMode: processingMode,\n            fileId: fileId || null,\n            headings: chunk.headings || [],\n            page_numbers: pageNumbers,\n            isImage: false,\n          }\n        }\n      });\n    }\n\n    // ── process pictures from DoclingDocument ──\n    if (doclingDocument && Array.isArray(doclingDocument.pictures)) {\n      for (let picIdx = 0; picIdx < doclingDocument.pictures.length; picIdx++) {\n        const picture = doclingDocument.pictures[picIdx];\n\n        // Extract associated text (captions + children text)\n        const pictureText = extractPictureText(doclingDocument, picture);\n\n        // Skip pictures without any associated text\n        if (!pictureText) continue;\n\n        // Extract image binary data\n        const imageData = extractImageData(picture);\n\n\n        // Skip pictures without embedded image data\n        if (!imageData) continue;\n\n        // Determine page number from provenance\n        let picPageNumber = 1;\n        if (Array.isArray(picture.prov) && picture.prov.length > 0) {\n          picPageNumber = picture.prov[0].page_no || 1;\n        }\n\n        // Store the image in PostgreSQL\n        let imageId = null;\n        try {\n          const width = picture.image && picture.image.size ? picture.image.size.width : null;\n          const height = picture.image && picture.image.size ? picture.image.size.height : null;\n\n          imageId = await storeImageInPostgres(\n            this,\n            imageData.base64,\n            imageData.mimetype,\n            fileHash,\n            picIdx,\n            width,\n            height\n          );\n        } catch (dbError) {\n          console.warn(`Failed to store image ${picIdx} in PostgreSQL: ${dbError.message}`);\n          // Still create the chunk but without the image reference\n        }\n\n        const contentType = extension === 'pdf' ? 'pdf' : 'office';\n        const citationString = `[Source: ${fileName}, Page: ${picPageNumber}, Image: ${picIdx}]`;\n\n        // Build the text for embedding: prefix with \"[Image]\" so downstream\n        // consumers know this chunk describes a picture.\n        const embeddingText = `[Image] ${pictureText}`;\n\n        results.push({\n          json: {\n            text: embeddingText,\n            metadata: {\n              source: filePath,\n              fileName: fileName,\n              page: picPageNumber,\n              totalPages: 0,\n              chunk_index: chunks.length + picIdx, // offset after text chunks\n              chunk_in_page: 0,\n              contentType: contentType,\n              fileHash: fileHash,\n              fileSize: fileSize,\n              mimeType: mimeType,\n              citationString: citationString,\n              processingMode: processingMode,\n              fileId: fileId || null,\n              headings: [],\n              page_numbers: [picPageNumber],\n              isImage: true,\n              imageId: imageId, // UUID reference to document_images table\n              imageMimetype: imageData.mimetype,\n              pictureIndex: picIdx,\n              pictureLabel: picture.label || 'picture',\n            }\n          }\n        });\n      }\n    }\n\n    // If no chunks produced (empty file), emit a marker so DB still updates\n    if (results.length === 0 || (chunks.length === 0 && (!doclingDocument || !doclingDocument.pictures || doclingDocument.pictures.length === 0))) {\n      results.push({\n        json: {\n          text: '',\n          metadata: {\n            source: filePath,\n            fileName: fileName,\n            page: 0,\n            totalPages: 0,\n            chunk_index: 0,\n            contentType: extension,\n            fileHash: fileHash,\n            fileSize: fileSize,\n            mimeType: mimeType,\n            citationString: `[Source: ${fileName}]`,\n            processingMode: processingMode,\n            fileId: fileId || null,\n            empty: true\n          }\n        }\n      });\n    }\n  } catch (error) {\n    // On error, emit an error-marker so the pipeline continues\n    results.push({\n      json: {\n        text: '',\n        metadata: {\n          source: filePath,\n          fileName: fileName,\n          page: 0,\n          totalPages: 0,\n          chunk_index: 0,\n          contentType: extension,\n          fileHash: fileHash,\n          fileSize: fileSize,\n          mimeType: mimeType,\n          citationString: `[Source: ${fileName}]`,\n          processingMode: processingMode,\n          fileId: fileId || null,\n          error: error.message\n        }\n      }\n    });\n  }\n}\n\nreturn results;"
+          }
+        },
+        "inputs": {
+          "input": [
+            {
+              "type": "main",
+              "required": true
+            }
+          ]
+        },
+        "outputs": {
+          "output": [
+            {
+              "type": "main"
+            }
+          ]
+        }
+      },
+      "id": "b25a78c0-7cb2-4288-8d4f-0860c73cecb8",
+      "name": "Extract & Chunk (Modified)",
+      "type": "@n8n/n8n-nodes-langchain.code",
+      "typeVersion": 1,
+      "position": [
+        -112,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5008/v1/vector-store/search",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $('Parse Request').item.json.userQuery }}"
+            },
+            {
+              "name": "collection_name",
+              "value": "documents"
+            },
+            {
+              "name": "limit",
+              "value": "5"
+            },
+            {
+              "name": "rerank",
+              "value": "true"
+            },
+            {
+              "name": "keywords",
+              "value": "={{ $json.keywords }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1776,
+        2288
+      ],
+      "id": "f5f7181d-7015-4afb-8263-77ce10746966",
+      "name": "Get Re-ranked result",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "qwen3:4b-instruct-2507-q4_K_M"
+            },
+            {
+              "name": "prompt",
+              "value": "=You are a query router. Analyze the user query and respond with JSON.\n\nUser Query: \"{{ $json.userQuery }}\"\n\nRespond with ONLY this JSON structure:\n{\n  \"requiresSearch\": true/false,\n  \"searchType\": \"semantic\" or \"keyword\" or \"none\",\n  \"keywords\": [\"keyword1\", \"keyword2\"],\n  \"reasoning\": \"brief explanation\"\n}\n\nRules:\n- requiresSearch=true if the query asks about specific facts, documents, or data that is not in the chat context\n- requiresSearch=false for greetings, opinions, summarization, or general chat\n- Extract 5-10 relevant search keywords (single words only!), related to the user query if \"requiresSearch=true\", otherwise none\n- do not include more than one word per keyword\n\nPrevious User queries: {{ JSON.stringify(JSON.parse($json.conversationHistory).filter((item) => item.role == \"user\").map(item => item.content)) }}"
+            },
+            {
+              "name": "stream",
+              "value": "={{ false }}"
+            },
+            {
+              "name": "keep_alive",
+              "value": "10m"
+            },
+            {
+              "name": "options",
+              "value": "={{ {\"temperature\": 0.1, \"num_predict\": 200, \"num_ctx\": 2000} }}"
+            },
+            {
+              "name": "format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2640,
+        2304
+      ],
+      "id": "32d5aba3-7dc0-4b2f-a36c-db400233637c",
+      "name": "Ollama Query Router"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "qwen3:4b-instruct-2507-q4_K_M"
+            },
+            {
+              "name": "prompt",
+              "value": "=Du bist sind ein hilfreicher Assistent, der Fragen AUSSCHLIESSLICH anhand des bereitgestellten Kontexts beantwortet. Du versuchst dem User so gut wie möglich mit den bereitgestelltem Kontext zu helfen und auf sein Problem einzugehen. Du musst Deine Quellen genau angeben.\n\nWICHTIGE REGELN FÜR DIE QUELLENANGABE:\n1. Du musst für JEDE von Dir genannte Tatsache die Quelle und die Seite/Zeile angeben.\n2. Formatiere Quellenangaben wie folgt: [Quelle: ganzer/dokumenten/pfad/doc.txt, Seite: X] oder [Quelle: ganzer/dokumenten/pfad/doc.txt, Zeile: X] am ENDE jedes Satzes.\n3. Verweise NICHT auf „ID: 1” oder Ähnliches – verwende die für Menschen lesbaren Quellenangaben.\n4. Wenn der Kontext keine relevanten Informationen enthält, sag: „Ich habe dazu keine Informationen in den verfügbaren Dokumenten.”\n5. Erfinde oder folgere niemals Informationen, die nicht im Kontext vorhanden sind.\n6. Antworte mit weniger als 200 Wörtern und fasse gegebenenfalls zusammen.\n\n\nCONTEXT: {{ $json.assembledContext }}\n\n---------------------\n\nHandhabung von Bildern: {{ $json.imageInstructions }}\n\n---------------------\n\nBenutzer-Query: {{ $('Parse Request').first().json.userQuery }}\n\nChatverlauf: {{ $('Parse Request').first().json.conversationHistory }}"
+            },
+            {
+              "name": "stream",
+              "value": "={{ false }}"
+            },
+            {
+              "name": "keep_alive",
+              "value": "10m"
+            },
+            {
+              "name": "options",
+              "value": "={{ {\"temperature\": 0.3, \"num_ctx\": 8192} }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1200,
+        2288
+      ],
+      "id": "98e3b2bd-e5e7-43f5-93e0-0c0d08e6caa9",
+      "name": "Ollama QA"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-query",
+              "name": "requiresSearch",
+              "value": "={{ JSON.parse($json.response).requiresSearch }}",
+              "type": "boolean"
+            },
+            {
+              "id": "session-id",
+              "name": "keywords",
+              "value": "={{ JSON.parse($json.response).keywords }}",
+              "type": "array"
+            },
+            {
+              "id": "conversation-history",
+              "name": "queryRouterReasoning",
+              "value": "={{ JSON.parse($json.response).reasoning }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "59bad6b7-7e3e-4abd-b337-ce182609cc7b",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2384,
+        2304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "qwen3:4b-instruct-2507-q4_K_M"
+            },
+            {
+              "name": "prompt",
+              "value": "=Du bist ein RAG Agent, der Nutzern Informationen aufbereiten soll. Die folgende User Query hat keinen Bedarf, Daten zu suchen. Falls die Query keine Zusammenfassung, Kombinierung oder Aufbereitung vorhandener Daten aus dem Chat erfordert oder keine explizite Aufforderung beinhaltet, antworte, dass du nur solche Aktionen unterstützst.\n\nAktuelle User query: {{ $('Parse Request').item.json.userQuery }}\n\n\nBisherige Konversation: {{ $('Parse Request').item.json.conversationHistory }}"
+            },
+            {
+              "name": "stream",
+              "value": "={{ false }}"
+            },
+            {
+              "name": "keep_alive",
+              "value": "10m"
+            },
+            {
+              "name": "options",
+              "value": "={{ {\"temperature\": 0.3, \"num_ctx\": 2000} }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1536,
+        2720
+      ],
+      "id": "2ef07b13-2745-4cfb-8f95-d529f6c2febe",
+      "name": "Ollama non-RAG QA"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f9b9f8f9-6293-4bca-9b68-7f89403e17bd",
+              "name": "generatedResponse",
+              "value": "={{ $json.response || \"Darauf habe ich leider keine Antwort.\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1216,
+        2720
+      ],
+      "id": "41415a31-e59e-4286-b63e-2a735960d376",
+      "name": "Edit Fields non RAG"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Scheduled Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Directory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Directory": {
+      "main": [
+        [
+          {
+            "node": "Filter Supported Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Supported Files": {
+      "main": [
+        [
+          {
+            "node": "File Hash Berechnen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Hash Berechnen": {
+      "main": [
+        [
+          {
+            "node": "Alle Bekannten Files Holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alle Bekannten Files Holen": {
+      "main": [
+        [
+          {
+            "node": "Klassifizierung der Dateien",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Klassifizierung der Dateien": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Re-Read File (New)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alte Vektoren löschen 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ende",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alte Vektoren Löschen 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Read File (New)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Set Metadata (New)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Metadata (New)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Chunk (New)": {
+      "main": [
+        [
+          {
+            "node": "Filter leere Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Per File (New)": {
+      "main": [
+        [
+          {
+            "node": "Upsert File Hash (New)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Read File (Modified)": {
+      "main": [
+        [
+          {
+            "node": "Set Metadata (New)1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Extract & Chunk (New)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter leere Chunks": {
+      "main": [
+        [
+          {
+            "node": "Aggregate 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open WebUI Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request": {
+      "main": [
+        [
+          {
+            "node": "Ollama Query Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Needed?": {
+      "main": [
+        [
+          {
+            "node": "Get Re-ranked result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ollama non-RAG QA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context Assembly": {
+      "main": [
+        [
+          {
+            "node": "Ollama QA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Responses": {
+      "main": [
+        [
+          {
+            "node": "Format for Open WebUI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Open WebUI": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Retrieve Images",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Retrieve Images": {
+      "main": [
+        [
+          {
+            "node": "Replace Image Placeholders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Image Placeholders": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Per File (New)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert File Hash (New)": {
+      "main": [
+        []
+      ]
+    },
+    "Alte Vektoren Löschen 2": {
+      "main": [
+        [
+          {
+            "node": "Delete File Hash (DB)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alte Vektoren löschen 1": {
+      "main": [
+        [
+          {
+            "node": "Delete Image Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Image Data": {
+      "main": [
+        [
+          {
+            "node": "Re-Read File (Modified)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Metadata (New)1": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Extract & Chunk (Modified)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter leere Chunks1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Per File (Modified)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Per File (Modified)": {
+      "main": [
+        [
+          {
+            "node": "Update File Hash (Modified)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate 1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate 2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Chunk (Modified)": {
+      "main": [
+        [
+          {
+            "node": "Filter leere Chunks1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Re-ranked result": {
+      "main": [
+        [
+          {
+            "node": "Context Assembly",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Query Router": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama QA": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Search Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama non-RAG QA": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields non RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields non RAG": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "766dda42-423d-4dfa-b787-e5226c9576c6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb66fbc95d58e30ef53b271ed42cee57ec78b50c6ab7e1cedb65c23157b2e259"
+  },
+  "id": "9YRNQJnNUa581vAmjjOEO",
+  "tags": []
+}

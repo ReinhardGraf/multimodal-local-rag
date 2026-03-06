@@ -1,0 +1,48 @@
+# Environment variables
+.env
+
+.venv
+# macOS
+.DS_Store
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node modules (if any local development)
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Docker volumes (if using local bind mounts)
+volumes/
+
+# Documents directory (contains sensitive data)
+documents/*
+!documents/.gitkeep
+
+# Database backups
+*.sql.gz
+*.sql.backup
+backups/
+
+# n8n data (if running locally)
+.n8n/
+
+# OS generated files
+Thumbs.db
+
+__pycache__/
+
+
+.playwright-mcp/
+.pytest_cache/

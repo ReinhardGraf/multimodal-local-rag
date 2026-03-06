@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backend"
+version = "2.0.0"
+description = "RAG Backend — document chunking & vector store services"
+requires-python = ">=3.11"
+dependencies = [
+    "asyncpg",
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "qdrant-client",
+    "fastembed",
+    "docling",
+    "docling-core",
+    "python-multipart",
+    "transformers",  # explicit: used for tokenizer-aware HybridChunker init
+    "sentence-transformers",  # CrossEncoder for reranking
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*","src*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

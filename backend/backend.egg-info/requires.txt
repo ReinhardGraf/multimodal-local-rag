@@ -1,0 +1,17 @@
+asyncpg
+fastapi
+uvicorn[standard]
+httpx
+pydantic>=2
+pydantic-settings>=2
+qdrant-client
+fastembed
+docling
+docling-core
+python-multipart
+transformers
+sentence-transformers
+
+[dev]
+pytest>=8
+pytest-asyncio
