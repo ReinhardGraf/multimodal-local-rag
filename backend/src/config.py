@@ -32,7 +32,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Locate the .env file relative to this source file so it is found
 # regardless of the current working directory.
-# backend/src/config.py → parents[2] = repo root (n8n-templates/)
+# backend/src/config.py → parents[2] = repo root (multimodal-rag/)
 _ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 
 

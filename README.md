@@ -299,7 +299,7 @@ console.log('Debug:', JSON.stringify(items[0].json, null, 2));
 ## File Structure
 
 ```
-n8n-templates/
+multimodal-rag/
 ├── local_rag_ingestion.json    # Smart Ingestion Workflow
 ├── local_rag_retrieval.json    # Agentic Retrieval Workflow
 ├── local_rag_simple.json       # Original simple workflow
