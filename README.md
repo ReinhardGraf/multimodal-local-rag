@@ -1,308 +1,130 @@
-# Local RAG System with Citation Support
+# Multimodal RAG System
 
-## Architecture Overview
+100% local AI knowledge base with image recognition and citation support. No cloud, no external APIs — fully GDPR-compliant.
 
-This system consists of two n8n workflows that provide a complete local RAG (Retrieval-Augmented Generation) solution with **exact citations** for every piece of generated information.
+## What This Does
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           INGESTION WORKFLOW                                 │
-│                                                                              │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐              │
-│  │  Cron/   │───▶│  Hash    │───▶│  Delete  │───▶│  Extract │              │
-│  │  Trigger │    │  Check   │    │  Old     │    │  w/Meta  │              │
-│  └──────────┘    └──────────┘    └──────────┘    └──────────┘              │
-│                                                         │                   │
-│                                         ┌───────────────┼───────────────┐   │
-│                                         ▼               ▼               ▼   │
-│                                    ┌─────────┐    ┌─────────┐    ┌─────────┐│
-│                                    │  PDF    │    │  Office │    │  Excel  ││
-│                                    │  Pages  │    │  Paras  │    │  Rows   ││
-│                                    └────┬────┘    └────┬────┘    └────┬────┘│
-│                                         └───────────────┼───────────────┘   │
-│                                                         ▼                   │
-│                                    ┌──────────┐    ┌──────────┐            │
-│                                    │  Smart   │───▶│  Qdrant  │            │
-│                                    │  Chunker │    │  Insert  │            │
-│                                    └──────────┘    └──────────┘            │
-└─────────────────────────────────────────────────────────────────────────────┘
+This system lets you ask natural-language questions about your internal documents (PDF, DOCX) and get answers with exact source citations and embedded images — all running locally.
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           RETRIEVAL WORKFLOW                                 │
-│                                                                              │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐              │
-│  │  Open    │───▶│  Query   │───▶│  Vector  │───▶│  Local   │              │
-│  │  WebUI   │    │  Router  │    │  Search  │    │  Rerank  │              │
-│  └──────────┘    └──────────┘    └──────────┘    └──────────┘              │
-│                       │                                │                    │
-│                       ▼                                ▼                    │
-│                  ┌──────────┐                    ┌──────────┐              │
-│                  │  Direct  │                    │  Context │              │
-│                  │  Answer  │                    │  Assembly│              │
-│                  └────┬─────┘                    └────┬─────┘              │
-│                       │                               │                    │
-│                       │         ┌──────────┐          │                    │
-│                       └────────▶│  LLM     │◀─────────┘                    │
-│                                 │  + Cite  │                               │
-│                                 └────┬─────┘                               │
-│                                      ▼                                     │
-│                                 ┌──────────┐    ┌──────────┐              │
-│                                 │  Format  │───▶│  Open    │              │
-│                                 │  Response│    │  WebUI   │              │
-│                                 └──────────┘    └──────────┘              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### Document Ingestion
 
----
+Documents are automatically processed through a pipeline:
 
-## Part 1: Smart Ingestion Workflow
+1. **n8n** detects new/changed files and triggers ingestion
+2. **Docling** analyzes documents — extracts text, images, and runs OCR
+3. **Backend (FastAPI)** chunks text with HybridChunker and creates embeddings (multilingual-e5-large-instruct, 1024 dim) plus BM25 sparse vectors
+4. **Qdrant** stores the vectors with metadata (source, page, image references)
+5. **PostgreSQL** stores extracted images and file hashes for idempotent re-ingestion
 
-### Key Features
+### Question & Answer
 
-1. **Metadata-Rich Extraction**
-   - PDFs: Page-level extraction with `page_number` metadata
-   - Office/Text: Paragraph-level with `paragraph` number
-   - Spreadsheets: Row-level with `sheet_name` and `row` number
+1. User asks a question via **Open WebUI**
+2. **n8n** receives the query and routes it to a **Qwen3-4B** query router
+3. If RAG is needed: the **Backend** performs hybrid search (dense + sparse) against Qdrant, reranks results, resolves image placeholders, and assembles context
+4. **Qwen3-4B Instruct (Q4)** generates an answer with source citations and embedded images
+5. If RAG is not needed: the query goes directly to Ollama (no retrieval)
 
-2. **Change Detection (Idempotency)**
-   - MD5 hash calculation for every file
-   - Postgres tracking table for processed files
-   - Automatic deletion of old vectors before re-ingestion
+## Components
 
-3. **Smart Chunking**
-   - Recursive character text splitter
-   - Configurable chunk size (default: 512 tokens)
-   - Preserves full citation metadata in every chunk
+| Service | Description | Port |
+|---------|-------------|------|
+| **n8n** | Workflow automation — file detection & query routing | 5678 |
+| **Backend** | FastAPI + Docling — chunking, embedding, hybrid search | 5008 |
+| **Qdrant** | Vector database (dense + sparse vectors + metadata) | 6333 |
+| **PostgreSQL** | Image storage, file hashes, chat history | 5432 (internal), 5436 (host) |
+| **Ollama** | Local LLM inference (Qwen3-4B Instruct) | 11434 |
+| **Open WebUI** | Chat interface | 3000 |
 
-### Node Details
-
-#### Calculate File Hash
-```javascript
-// Calculates MD5 hash for change detection
-const crypto = require('crypto');
-const fileBuffer = fs.readFileSync(filePath);
-const hashSum = crypto.createHash('md5');
-hashSum.update(fileBuffer);
-const fileHash = hashSum.digest('hex');
-```
-
-#### PDF Page Extraction
-```javascript
-// Extracts text per page with page number metadata
-const pdfData = await pdf(dataBuffer, {
-  pagerender: function(pageData) {
-    currentPage++;
-    return pageData.getTextContent().then(textContent => {
-      pages.push({
-        pageNumber: currentPage,
-        text: extractedText
-      });
-    });
-  }
-});
-```
-
-#### Vector Payload Structure
-```json
-{
-  "pageContent": "The safety valve pressure is 50psi...",
-  "metadata": {
-    "source": "/data/documents/manual.pdf",
-    "fileName": "manual.pdf",
-    "page": 15,
-    "contentType": "pdf",
-    "citationString": "[Source: manual.pdf, Page: 15]",
-    "fileHash": "a1b2c3d4e5f6..."
-  }
-}
-```
-
----
-
-## Part 2: Agentic Retrieval Workflow
-
-### Key Features
-
-1. **Query Router (7B Optimized)**
-   - Heuristic-first approach minimizes LLM calls
-   - Pattern matching for greetings/simple queries
-   - JSON-mode LLM routing for ambiguous queries
-
-2. **Local Reranking**
-   - Hybrid scoring without external APIs
-   - Vector similarity (50%) + Keyword overlap (25%) + Term frequency (15%) + Length (10%)
-
-3. **Citation-Aware Generation**
-   - Strict system prompt for source citation
-   - Every fact must include `[Source: filename, Page: X]`
-
-### Context Assembly Format
-
-The Context Assembly node formats retrieved documents like this:
-
-```
-[ID: 1] [Source: manual.pdf, Page: 15]
-Content: The safety valve pressure is 50psi. Always check the pressure gauge before operation.
-
----
-
-[ID: 2] [Source: data.xlsx, Sheet: Q3 Report, Row: 4]
-Content: **Row 4 from Q3 Report:**
-- **Quarter**: Q3
-- **Revenue**: $500k
-- **Growth**: 15%
-
----
-
-[ID: 3] [Source: procedures.docx, Paragraph: 12]
-Content: Maintenance should be performed every 30 days according to the schedule outlined in section 4.2.
-```
-
-### System Prompt for Citation
-
-```
-You are a helpful assistant that answers questions using ONLY the provided context.
-
-CRITICAL CITATION RULES:
-1. You MUST cite the Source and Page/Row for EVERY fact you state
-2. Format citations as [Source: filename, Page: X] at the END of each sentence
-3. Do NOT reference "ID: 1" - use human-readable source information
-4. If context doesn't contain relevant info, say "I don't have information about that"
-5. Never make up information not in the context
-```
-
-### Example LLM Output
-
-**User Query:** "What is the safety valve pressure?"
-
-**LLM Response:**
-> The safety valve pressure is 50psi [Source: manual.pdf, Page: 15]. You should always check the pressure gauge before operation to ensure it's within the acceptable range [Source: manual.pdf, Page: 15].
-
----
-
-## Setup Instructions
+## Setup
 
 ### Prerequisites
 
-1. **Docker Services Required:**
-   - n8n (workflow automation)
-   - Ollama (local LLM inference)
-   - Qdrant (vector database)
-   - PostgreSQL (state management)
+- Docker and Docker Compose
+- GPU with at least 16 GB VRAM recommended (e.g. NVIDIA RTX 4080)
+- 32 GB+ system RAM
 
-2. **Ollama Models:**
-   ```bash
-   ollama pull llama3.1:8b-instruct-q4_K_M
-   ollama pull mistral:7b-instruct-q4_K_M
-   ollama pull nomic-embed-text:latest
-   ```
-
-### Database Setup
-
-```sql
--- File hash tracking table
-CREATE TABLE IF NOT EXISTS file_hashes (
-  id SERIAL PRIMARY KEY,
-  file_path TEXT UNIQUE NOT NULL,
-  file_hash VARCHAR(32) NOT NULL,
-  processed_at TIMESTAMP DEFAULT NOW(),
-  chunk_count INTEGER DEFAULT 0
-);
-
-CREATE INDEX idx_file_path ON file_hashes(file_path);
-CREATE INDEX idx_file_hash ON file_hashes(file_hash);
-
--- Chat memory table (for n8n Postgres Chat Memory)
-CREATE TABLE IF NOT EXISTS n8n_chat_histories (
-  id SERIAL PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  message JSONB NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_session_id ON n8n_chat_histories(session_id);
-```
-
-### Qdrant Collection Setup
+### 1. Clone and configure
 
 ```bash
-curl -X PUT 'http://localhost:6333/collections/documents' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "vectors": {
-      "size": 768,
-      "distance": "Cosine"
-    }
-  }'
+git clone <repo-url> && cd multimodal-rag
+cp .env.example .env
+# Edit .env to adjust passwords, ports, or model choices
 ```
 
-### Open WebUI Configuration
+### 2. Choose your Docker Compose mode
 
-Configure Open WebUI to use your n8n webhook as the API endpoint:
+#### Production (everything in Docker)
 
-1. Go to Settings → Connections
-2. Add Custom Model:
-   - Name: `local-rag`
-   - Base URL: `http://n8n:5678/webhook/rag-chat`
-   - Model ID: `local-rag-llama3.1`
+All services including Ollama and the Backend run inside Docker containers. This is the default.
 
----
-
-## Performance Optimization
-
-### For 7B Models
-
-1. **Quantization:** Use `q4_K_M` quantization for best speed/quality balance
-2. **Context Length:** Limit to 2048 tokens for faster inference
-3. **Temperature:** Use 0.1-0.3 for factual responses
-4. **Top-K Results:** Retrieve 10, rerank to 5 for context
-
-### Memory Usage
-
-| Component | Estimated RAM |
-|-----------|--------------|
-| Llama 3.1 8B (q4) | ~5GB |
-| Mistral 7B (q4) | ~4GB |
-| nomic-embed-text | ~500MB |
-| Qdrant | ~1GB (10k docs) |
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Empty search results:**
-   - Verify Qdrant collection exists and has data
-   - Check embedding model is running
-   - Verify collection name matches in both workflows
-
-2. **Missing citations:**
-   - Ensure metadata is preserved through chunking
-   - Check Context Assembly node is formatting correctly
-   - Verify system prompt is being applied
-
-3. **Slow response times:**
-   - Reduce top-K results from 10 to 5
-   - Use smaller quantization (q4_0 vs q4_K_M)
-   - Enable GPU acceleration in Ollama
-
-### Debug Mode
-
-Enable detailed logging in Code nodes:
-```javascript
-console.log('Debug:', JSON.stringify(items[0].json, null, 2));
+```bash
+docker compose up -d
 ```
 
----
+Use `docker-compose.yml`. All containers communicate over the internal `rag-network` — no `host.docker.internal` needed.
 
-## File Structure
+#### Development (Backend + Ollama running locally)
+
+Use this when you want to run the Backend and Ollama natively on your host (e.g. on macOS to access the GPU directly):
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+This starts only n8n, PostgreSQL, Qdrant, and Open WebUI in Docker. You then run Ollama and the Backend yourself:
+
+```bash
+# Start Ollama natively
+ollama serve
+
+# Start the Backend
+cd backend
+pip install -e .
+uvicorn src.main:app --host 0.0.0.0 --port 5008
+```
+
+In dev mode, update your `.env` to point containers at the host:
 
 ```
-multimodal-rag/
-├── local_rag_ingestion.json    # Smart Ingestion Workflow
-├── local_rag_retrieval.json    # Agentic Retrieval Workflow
-├── local_rag_simple.json       # Original simple workflow
-├── README.md                   # This documentation
-└── docker-compose.yml          # Infrastructure setup
+OLLAMA_BASE_URL_INTERNAL=http://host.docker.internal:11434
+OLLAMA_BASE_URL_WEBUI=http://host.docker.internal:11434
 ```
+
+### 3. Run the setup script
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+This will:
+- Start Docker services
+- Wait for all services to become healthy
+- Pull the configured Ollama models
+- Create the Qdrant collection
+- Pre-download the HuggingFace tokenizer
+
+### 4. Import the n8n workflow
+
+1. Open n8n at `http://localhost:5678`
+2. Go to **Workflows → Import**
+3. Import `Multimodal RAG.json`
+4. Configure credentials for Ollama, Qdrant, and PostgreSQL
+
+### 5. Add documents
+
+Place your PDF/DOCX files into the `documents/` folder and activate the ingestion workflow in n8n.
+
+## Web UIs
+
+| UI | URL | Purpose |
+|----|-----|---------|
+| **n8n** | http://localhost:5678 | Workflow editor and monitoring |
+| **Open WebUI** | http://localhost:3000 | Chat interface for asking questions |
+| **Qdrant Dashboard** | http://localhost:6333/dashboard | Inspect vector collections and data |
+
+## Hardware Requirements
+
+- **GPU**: 16 GB+ VRAM (NVIDIA RTX 4080 or similar)
+- **RAM**: 32 GB+
+- **OS**: Linux, macOS, or Windows

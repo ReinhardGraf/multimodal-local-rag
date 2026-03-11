@@ -9,6 +9,7 @@ Sparse vectors: fastembed ``Qdrant/bm25``  (language-agnostic BM25 that
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Optional
@@ -101,6 +102,7 @@ class VectorStoreService:
         self._qdrant: Optional[QdrantClient] = None
         self._sparse_encoder: Any = None  # fastembed.SparseTextEmbedding
         self._reranker: Any = None  # RerankerService (lazy)
+        self._http_client: Optional[httpx.AsyncClient] = None
 
     # ── Lazy properties ──────────────────────────────────────
 
@@ -122,6 +124,14 @@ class VectorStoreService:
         return self._reranker
 
     @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Return (lazily create) a reusable async HTTP client."""
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=300.0)
+            logger.info("Async HTTP client created")
+        return self._http_client
+
+    @property
     def sparse_encoder(self):
         """Return (lazily create) the BM25 sparse encoder from *fastembed*."""
         if self._sparse_encoder is None:
@@ -138,15 +148,15 @@ class VectorStoreService:
     ) -> list[list[float]]:
         """Call Ollama ``/api/embed`` in batches and return dense vectors."""
         all_embeddings: list[list[float]] = []
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            for start in range(0, len(texts), _OLLAMA_EMBED_BATCH):
-                batch = texts[start : start + _OLLAMA_EMBED_BATCH]
-                response = await client.post(
-                    f"{self.ollama_url}/api/embed",
-                    json={"model": self.embedding_model, "input": batch, "keep_alive": "10m"},
-                )
-                response.raise_for_status()
-                all_embeddings.extend(response.json()["embeddings"])
+        for start in range(0, len(texts), _OLLAMA_EMBED_BATCH):
+            batch = texts[start : start + _OLLAMA_EMBED_BATCH]
+            response = await self.http_client.post(
+                f"{self.ollama_url}/api/embed",
+                json={"model": self.embedding_model, "input": batch, "keep_alive": "10m"},
+            )
+            response.raise_for_status()
+            all_embeddings.extend(response.json()["embeddings"])
+            await response.aclose()
         return all_embeddings
 
     # ── Sparse embeddings (fastembed BM25) ───────────────────
@@ -215,7 +225,9 @@ class VectorStoreService:
 
         # Generate both embedding types
         dense_embeddings = await self._get_dense_embeddings(texts)
-        sparse_embeddings = self._get_sparse_embeddings(texts)
+        sparse_embeddings = await asyncio.to_thread(
+            self._get_sparse_embeddings, texts
+        )
 
         # Build Qdrant points
         points: list[qmodels.PointStruct] = []
@@ -237,7 +249,9 @@ class VectorStoreService:
             )
 
         # Batch upsert
-        self.qdrant.upsert(collection_name=name, points=points)
+        await asyncio.to_thread(
+            self.qdrant.upsert, collection_name=name, points=points
+        )
         logger.info("Upserted %d points into '%s'", len(points), name)
 
         return len(points)
@@ -290,7 +304,9 @@ class VectorStoreService:
         # Sparse (BM25) embeddings: use explicit keywords when provided,
         # otherwise fall back to the query string.
         sparse_input = " ".join(keywords) if keywords else query
-        sparse_embs = self._get_sparse_embeddings([sparse_input])
+        sparse_embs = await asyncio.to_thread(
+            self._get_sparse_embeddings, [sparse_input]
+        )
         sparse_emb = sparse_embs[0]
 
         prefetch = [
@@ -306,12 +322,14 @@ class VectorStoreService:
             ),
         ]
 
-        results = self.qdrant.query_points(
+        results = await asyncio.to_thread(
+            self.qdrant.query_points,
             collection_name=name,
             prefetch=prefetch,
             query=qmodels.FusionQuery(fusion=qmodels.Fusion.RRF),
             limit=retrieval_limit,
             score_threshold=score_threshold,
+            with_vectors=False,
         )
 
         hits = [
@@ -328,7 +346,9 @@ class VectorStoreService:
         reranked = False
         if rerank and hits:
             final_k = rerank_top_k if rerank_top_k is not None else limit
-            hits = self.reranker.rerank(query, hits, top_k=final_k)
+            hits = await asyncio.to_thread(
+                self.reranker.rerank, query, hits, top_k=final_k
+            )
             reranked = True
 
         return hits, reranked

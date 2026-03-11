@@ -27,7 +27,7 @@ fi
 : ${OPEN_WEBUI_PORT:=3000}
 : ${POSTGRES_USER:=n8n}
 : ${POSTGRES_DB:=n8n_rag}
-: ${OLLAMA_MODELS:="qllama/multilingual-e5-large-instruct:latest"}
+: ${OLLAMA_MODELS:="qwen3:4b-instruct-2507-q4_K_M,qllama/multilingual-e5-large-instruct:latest"}
 : ${QDRANT_COLLECTION_NAME:=documents}
 : ${EMBEDDING_DIMENSION:=1024}
 
@@ -271,12 +271,11 @@ setup_qdrant() {
 import_workflows() {
     echo -e "\n${YELLOW}Importing n8n workflows...${NC}"
     
-    echo -e "${YELLOW}Please import the following workflows manually in n8n:${NC}"
+    echo -e "${YELLOW}Please import the workflow manually in n8n:${NC}"
     echo "  1. Open http://localhost:${N8N_EXTERNAL_PORT} in your browser"
     echo "  2. Go to Workflows → Import"
-    echo "  3. Import local_rag_ingestion.json"
-    echo "  4. Import local_rag_retrieval.json"
-    echo "  5. Configure credentials for:"
+    echo "  3. Import 'Multimodal RAG.json'"
+    echo "  4. Configure credentials for:"
     echo "     - Ollama API (http://ollama:11434)"
     echo "     - Qdrant API (http://qdrant:6333)"
     echo "     - PostgreSQL (host: postgres, db: ${POSTGRES_DB}, user: ${POSTGRES_USER}, password: from .env)"
@@ -304,11 +303,11 @@ print_summary() {
     echo "  • PostgreSQL: ${POSTGRES_USER} / [see .env]"
     echo ""
     echo "Next Steps:"
-    echo "  1. Import workflows into n8n"
+    echo "  1. Import 'Multimodal RAG.json' into n8n"
     echo "  2. Configure n8n credentials"
     echo "  3. Add documents to ${DOCUMENTS_PATH:-./documents} folder"
     echo "  4. Activate the ingestion workflow"
-    echo "  5. Test with Open WebUI"
+    echo "  5. Ask questions via Open WebUI"
     echo ""
     echo "Documentation: See README.md for detailed instructions"
     echo "To customize settings, edit .env file and re-run ./setup.sh"
