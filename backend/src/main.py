@@ -11,39 +11,47 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+import asyncpg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
-from src.router import router, _vector_service
+from src.router import router
 
 logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: warmup models on startup, offload on shutdown."""
-    from backend.src.services.model_lifecycle_service import lifecycle
+    """FastAPI lifespan: create services, warmup models on startup, clean up on shutdown."""
+    from backend.src.services.model_lifecycle_service import ModelLifecycleService
+    from backend.src.services.vector_store_service import VectorStoreService
 
-    # Wire the shared service instances into the lifecycle manager so it
-    # can touch the lazy properties and null them out on offload.
-    lifecycle._vec_store = _vector_service
-    lifecycle._reranker = _vector_service.reranker  # lightweight constructor
+    log = logging.getLogger(__name__)
+
+    # ── Create shared service instances ──────────────────────
+    vec = VectorStoreService()
+    lc = ModelLifecycleService(vec_store=vec, reranker=vec.reranker)
+    pg_pool = await asyncpg.create_pool(dsn=settings.postgres_dsn)
+
+    app.state.vector_service = vec
+    app.state.lifecycle = lc
+    app.state.pg_pool = pg_pool
 
     if settings.warmup_on_startup:
-        logging.getLogger(__name__).info(
-            "WARMUP_ON_STARTUP=True — loading models into VRAM …"
-        )
-        await lifecycle.warmup()
+        log.info("WARMUP_ON_STARTUP=True — loading models into VRAM …")
+        await lc.warmup()
 
     # Start the idle-watcher background task
-    lifecycle.start_watcher()
+    lc.start_watcher()
 
     yield  # application is running
 
     # ── Shutdown ─────────────────────────────────────────────
-    lifecycle.stop_watcher()
-    logging.getLogger(__name__).info("FastAPI shutdown — lifecycle watcher stopped")
+    lc.stop_watcher()
+    await vec.close()
+    await pg_pool.close()
+    log.info("FastAPI shutdown — all resources released")
 
 
 app = FastAPI(title="RAG Backend", version="2.0.0", lifespan=lifespan)
@@ -52,7 +60,7 @@ app = FastAPI(title="RAG Backend", version="2.0.0", lifespan=lifespan)
 # from browser-side JavaScript.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten to your OpenWebUI URL in production
+    allow_origins=settings.cors_allow_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )

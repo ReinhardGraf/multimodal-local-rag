@@ -262,3 +262,10 @@ class RerankerService:
         if self.backend == "ollama":
             return self._rerank_ollama(query, documents, top_k=top_k)
         return self._rerank_cross_encoder(query, documents, top_k=top_k)
+
+    def offload_model(self) -> None:
+        """Release the cross-encoder model and close the Ollama HTTP client."""
+        self._model = None
+        if self._http_client is not None:
+            self._http_client.close()
+            self._http_client = None

@@ -96,7 +96,7 @@ services:
     environment:
       - QDRANT_URL=http://qdrant:6333
       - POSTGRES_DSN=postgresql://${POSTGRES_USER:-n8n}:${POSTGRES_PASSWORD:-n8n_password}@postgres:5432/${POSTGRES_DB:-n8n_rag}
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_URL=http://ollama:11434
     volumes:
       - ${DOCUMENTS_PATH:-./documents}:/data/documents:ro
     networks:

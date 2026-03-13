@@ -25,6 +25,11 @@ services:
       - ${DOCUMENTS_PATH:-./documents}:/data/documents:ro
     networks:
       - rag-network
+    # Allows n8n to reach services on the Docker host (e.g. the locally running
+    # rag-backend at http://host.docker.internal:5008). Required on Linux;
+    # Docker Desktop on macOS/Windows resolves this automatically.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - ./.env
     depends_on:

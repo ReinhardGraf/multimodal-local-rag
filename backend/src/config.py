@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     # Set to 0 to disable automatic offload.
     model_idle_timeout: int = 600
 
+    # ── CORS ──────────────────────────────────────────────────────────────
+    # Comma-separated list of allowed origins for CORS.
+    # Override via CORS_ALLOW_ORIGINS env var, e.g. "http://localhost:3000,https://myapp.example.com"
+    cors_allow_origins: list[str] = ["http://localhost:3000"]
+
 
 # Module-level singleton — import this directly in service modules.
 settings = Settings()

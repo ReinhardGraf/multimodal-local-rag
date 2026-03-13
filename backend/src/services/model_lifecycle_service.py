@@ -54,10 +54,9 @@ class ModelLifecycleService:
     ``asyncio.get_event_loop().run_in_executor(None, ...)``.
     """
 
-    def __init__(self) -> None:
-        # Populated lazily by router.py to avoid import cycles
-        self._reranker: Any = None   # RerankerService instance
-        self._vec_store: Any = None  # VectorStoreService instance
+    def __init__(self, vec_store: Any, reranker: Any) -> None:
+        self._reranker = reranker
+        self._vec_store = vec_store
 
         # Track whether models are currently resident in VRAM / RAM
         self._cross_encoder_loaded: bool = False
@@ -169,7 +168,7 @@ class ModelLifecycleService:
 
         # ── CrossEncoder ─────────────────────────────────────
         if self._cross_encoder_loaded and self._reranker is not None:
-            self._reranker._model = None
+            self._reranker.offload_model()
             self._cross_encoder_loaded = False
             try:
                 import torch
@@ -187,7 +186,7 @@ class ModelLifecycleService:
 
         # ── BM25 ─────────────────────────────────────────────
         if self._bm25_loaded and self._vec_store is not None:
-            self._vec_store._sparse_encoder = None
+            self._vec_store.offload_sparse_encoder()
             self._bm25_loaded = False
             logger.info("BM25 sparse encoder offloaded")
 
@@ -262,6 +261,3 @@ class ModelLifecycleService:
         if self._watcher_task and not self._watcher_task.done():
             self._watcher_task.cancel()
 
-
-# ── Module-level singleton ───────────────────────────────────
-lifecycle = ModelLifecycleService()

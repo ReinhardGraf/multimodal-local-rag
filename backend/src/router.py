@@ -12,15 +12,16 @@ GET  /health                        → liveness probe
 
 from __future__ import annotations
 
-from http.client import HTTPException
 import logging
 import time
+from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile
+import asyncpg
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from backend.src.services.document_chunker_service import convert_and_chunk
-from backend.src.services.model_lifecycle_service import lifecycle
+from backend.src.services.model_lifecycle_service import ModelLifecycleService
 from backend.src.services.reconciliation_service import ReconciliationService
 from backend.src.services.vector_store_service import (
     SearchRequest,
@@ -35,8 +36,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Service singletons (lightweight — heavy resources are lazily initialised)
-_vector_service = VectorStoreService()
+
+# ── Dependency helpers ───────────────────────────────────────
+
+
+def get_vector_service(request: Request) -> VectorStoreService:
+    return request.app.state.vector_service
+
+
+def get_lifecycle(request: Request) -> ModelLifecycleService:
+    return request.app.state.lifecycle
+
+
+def get_pg_pool(request: Request) -> asyncpg.Pool:
+    return request.app.state.pg_pool
+
+
+# Annotated aliases for concise signatures
+VecDep = Annotated[VectorStoreService, Depends(get_vector_service)]
+LifecycleDep = Annotated[ModelLifecycleService, Depends(get_lifecycle)]
+PgPoolDep = Annotated[asyncpg.Pool, Depends(get_pg_pool)]
 
 
 # ── Document chunking ───────────────────────────────────────
@@ -92,7 +111,11 @@ async def chunk_hierarchical_file(
 
 
 @router.post("/v1/vector-store/upsert", response_model=UpsertResponse)
-async def vector_store_upsert(request: UpsertRequest):
+async def vector_store_upsert(
+    body: UpsertRequest,
+    vec: VecDep,
+    lc: LifecycleDep,
+):
     """
     Generate dense (Ollama) + sparse (BM25) embeddings for the supplied
     documents and batch-upsert them into a Qdrant collection.
@@ -101,18 +124,18 @@ async def vector_store_upsert(request: UpsertRequest):
     configuration if it does not already exist.
     """
     t0 = time.time()
-    collection = request.collection_name or _vector_service.default_collection
+    collection = body.collection_name or vec.default_collection
 
     try:
         # Ensure the target collection has the right schema
-        _vector_service.ensure_collection(collection)
+        vec.ensure_collection(collection)
 
-        count = await _vector_service.upsert_documents(
-            documents=request.documents,
+        count = await vec.upsert_documents(
+            documents=body.documents,
             collection_name=collection,
         )
 
-        lifecycle.record_activity()
+        lc.record_activity()
 
         return UpsertResponse(
             status="ok",
@@ -136,7 +159,11 @@ async def vector_store_upsert(request: UpsertRequest):
 
 
 @router.post("/v1/vector-store/search", response_model=SearchResponse)
-async def vector_store_search(request: SearchRequest):
+async def vector_store_search(
+    body: SearchRequest,
+    vec: VecDep,
+    lc: LifecycleDep,
+):
     """
     Run a hybrid (dense + sparse) search with Reciprocal Rank Fusion
     against a Qdrant collection.
@@ -145,20 +172,20 @@ async def vector_store_search(request: SearchRequest):
     ``metadata`` fields.
     """
     t0 = time.time()
-    collection = request.collection_name or _vector_service.default_collection
+    collection = body.collection_name or vec.default_collection
 
     try:
-        hits, reranked = await _vector_service.search(
-            query=request.query,
+        hits, reranked = await vec.search(
+            query=body.query,
             collection_name=collection,
-            limit=request.limit,
-            score_threshold=request.score_threshold,
-            rerank=request.rerank,
-            rerank_top_k=request.rerank_top_k,
-            keywords=request.keywords,
+            limit=body.limit,
+            score_threshold=body.score_threshold,
+            rerank=body.rerank,
+            rerank_top_k=body.rerank_top_k,
+            keywords=body.keywords,
         )
 
-        lifecycle.record_activity()
+        lc.record_activity()
 
         return SearchResponse(
             results=[SearchResultItem(**h) for h in hits],
@@ -182,7 +209,7 @@ async def vector_store_search(request: SearchRequest):
 
 
 @router.get("/v1/warmup")
-async def warmup():
+async def warmup(lc: LifecycleDep):
     """
     Preload all GPU-bound models into VRAM.
 
@@ -196,7 +223,7 @@ async def warmup():
         Per-component status with ``loaded``, ``already_loaded``, and
         ``ms`` (load time in milliseconds) keys.
     """
-    status = await lifecycle.warmup()
+    status = await lc.warmup()
     return {"status": "ok", "components": status}
 
 
@@ -209,12 +236,39 @@ async def health():
 
 
 @router.post("/v1/reconciliation/file-hash")
-async def file_hash_reconciliation():
+async def file_hash_reconciliation(vec: VecDep, pg_pool: PgPoolDep):
     try:
-        service = ReconciliationService()
+        service = ReconciliationService(
+            qdrant_client=vec.qdrant,
+            pg_pool=pg_pool,
+        )
         result = await service.reconcile_file_hashes()
         return result
     except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": str(e),
+            },
+        )
+
+
+@router.get("/v1/file-hashes/count")
+async def get_file_hashes_count(pg_pool: PgPoolDep):
+    """
+    Return the number of files in the file_hashes PostgreSQL table.
+
+    Returns
+    -------
+    dict
+        A dictionary with the key "count" and the number of files as value.
+    """
+    try:
+        async with pg_pool.acquire() as conn:
+            result = await conn.fetchval("SELECT COUNT(*) FROM file_hashes")
+        return {"count": result}
+    except Exception as e:
+        logger.exception("Error getting file hashes count: %s", e)
         return JSONResponse(
             status_code=500,
             content={

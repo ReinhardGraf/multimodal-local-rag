@@ -141,6 +141,21 @@ class VectorStoreService:
             logger.info("Sparse encoder loaded (Qdrant/bm25)")
         return self._sparse_encoder
 
+    # ── Resource management ──────────────────────────────────
+
+    def offload_sparse_encoder(self) -> None:
+        """Release the BM25 sparse encoder to free memory."""
+        self._sparse_encoder = None
+
+    async def close(self) -> None:
+        """Shut down the async HTTP client and Qdrant connection."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+        if self._qdrant is not None:
+            self._qdrant.close()
+            self._qdrant = None
+
     # ── Dense embeddings (Ollama) ────────────────────────────
 
     async def _get_dense_embeddings(
