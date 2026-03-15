@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.src.services.reranker_service import RerankerService
+from src.services.reranker_service import RerankerService
 
 
 # ── Fake model ──────────────────────────────────────────────

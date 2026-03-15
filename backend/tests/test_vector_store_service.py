@@ -13,7 +13,7 @@ import uuid
 import pytest
 from qdrant_client import QdrantClient
 
-from backend.src.services.vector_store_service import DocumentItem, VectorStoreService
+from src.services.vector_store_service import DocumentItem, VectorStoreService
 
 # Must match the value in conftest.py
 TEST_COLLECTION = "test_documents"
@@ -372,7 +372,7 @@ class TestSearchWithReranking:
     @pytest.fixture(autouse=True)
     def _inject_fake_reranker(self, vector_service: VectorStoreService):
         """Inject a fake reranker so we don't need a real model."""
-        from backend.src.services.reranker_service import RerankerService
+        from src.services.reranker_service import RerankerService
         fake_reranker = RerankerService()
         fake_reranker._model = _FakeCrossEncoderForIntegration()
         vector_service._reranker = fake_reranker
@@ -554,7 +554,7 @@ class TestSearchWithKeywords:
         collection: str,
     ):
         """Keywords + reranking should work together."""
-        from backend.src.services.reranker_service import RerankerService
+        from src.services.reranker_service import RerankerService
         fake_reranker = RerankerService()
         fake_reranker._model = _FakeCrossEncoderForIntegration()
         vector_service._reranker = fake_reranker

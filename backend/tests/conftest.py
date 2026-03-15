@@ -14,7 +14,7 @@ import pytest
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from backend.src.services.vector_store_service import VectorStoreService
+from src.services.vector_store_service import VectorStoreService
 
 # ── Constants ────────────────────────────────────────────────
 
