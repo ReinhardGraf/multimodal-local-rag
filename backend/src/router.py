@@ -251,27 +251,3 @@ async def file_hash_reconciliation(vec: VecDep, pg_pool: PgPoolDep):
                 "error": str(e),
             },
         )
-
-
-@router.get("/v1/file-hashes/count")
-async def get_file_hashes_count(pg_pool: PgPoolDep):
-    """
-    Return the number of files in the file_hashes PostgreSQL table.
-
-    Returns
-    -------
-    dict
-        A dictionary with the key "count" and the number of files as value.
-    """
-    try:
-        async with pg_pool.acquire() as conn:
-            result = await conn.fetchval("SELECT COUNT(*) FROM file_hashes")
-        return {"count": result}
-    except Exception as e:
-        logger.exception("Error getting file hashes count: %s", e)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": str(e),
-            },
-        )
