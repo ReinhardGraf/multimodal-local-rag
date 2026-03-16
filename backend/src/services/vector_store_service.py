@@ -117,7 +117,7 @@ class VectorStoreService:
     def reranker(self):
         """Return (lazily create) the RerankerService."""
         if self._reranker is None:
-            from backend.src.services.reranker_service import RerankerService
+            from src.services.reranker_service import RerankerService
 
             self._reranker = RerankerService()
             logger.info("RerankerService initialised")

@@ -113,8 +113,8 @@ async def chunk_hierarchical_file(
 @router.post("/v1/vector-store/upsert", response_model=UpsertResponse)
 async def vector_store_upsert(
     body: UpsertRequest,
-    vec: VecDep,
-    lc: LifecycleDep,
+    vector_service: VecDep,
+    lifecycle_service: LifecycleDep,
 ):
     """
     Generate dense (Ollama) + sparse (BM25) embeddings for the supplied
@@ -124,18 +124,18 @@ async def vector_store_upsert(
     configuration if it does not already exist.
     """
     t0 = time.time()
-    collection = body.collection_name or vec.default_collection
+    collection = body.collection_name or vector_service.default_collection
 
     try:
         # Ensure the target collection has the right schema
-        vec.ensure_collection(collection)
+        vector_service.ensure_collection(collection)
 
-        count = await vec.upsert_documents(
+        count = await vector_service.upsert_documents(
             documents=body.documents,
             collection_name=collection,
         )
 
-        lc.record_activity()
+        lifecycle_service.record_activity()
 
         return UpsertResponse(
             status="ok",
@@ -161,8 +161,8 @@ async def vector_store_upsert(
 @router.post("/v1/vector-store/search", response_model=SearchResponse)
 async def vector_store_search(
     body: SearchRequest,
-    vec: VecDep,
-    lc: LifecycleDep,
+    vector_service: VecDep,
+    lifecycle_service: LifecycleDep,
 ):
     """
     Run a hybrid (dense + sparse) search with Reciprocal Rank Fusion
@@ -172,10 +172,10 @@ async def vector_store_search(
     ``metadata`` fields.
     """
     t0 = time.time()
-    collection = body.collection_name or vec.default_collection
+    collection = body.collection_name or vector_service.default_collection
 
     try:
-        hits, reranked = await vec.search(
+        hits, reranked = await vector_service.search(
             query=body.query,
             collection_name=collection,
             limit=body.limit,
@@ -185,7 +185,7 @@ async def vector_store_search(
             keywords=body.keywords,
         )
 
-        lc.record_activity()
+        lifecycle_service.record_activity()
 
         return SearchResponse(
             results=[SearchResultItem(**h) for h in hits],
@@ -209,7 +209,7 @@ async def vector_store_search(
 
 
 @router.get("/v1/warmup")
-async def warmup(lc: LifecycleDep):
+async def warmup(lifecycle_service: LifecycleDep):
     """
     Preload all GPU-bound models into VRAM.
 
@@ -223,7 +223,7 @@ async def warmup(lc: LifecycleDep):
         Per-component status with ``loaded``, ``already_loaded``, and
         ``ms`` (load time in milliseconds) keys.
     """
-    status = await lc.warmup()
+    status = await lifecycle_service.warmup()
     return {"status": "ok", "components": status}
 
 
@@ -236,10 +236,10 @@ async def health():
 
 
 @router.post("/v1/reconciliation/file-hash")
-async def file_hash_reconciliation(vec: VecDep, pg_pool: PgPoolDep):
+async def file_hash_reconciliation(vector_service: VecDep, pg_pool: PgPoolDep):
     try:
         service = ReconciliationService(
-            qdrant_client=vec.qdrant,
+            qdrant_client=vector_service.qdrant,
             pg_pool=pg_pool,
         )
         result = await service.reconcile_file_hashes()
@@ -250,4 +250,26 @@ async def file_hash_reconciliation(vec: VecDep, pg_pool: PgPoolDep):
             content={
                 "error": str(e),
             },
+        )
+
+@router.get("/v1/file-hashes/count")
+async def get_file_hashes_count(pg_pool: PgPoolDep):
+    """
+    Get the number of files in the file_hashes table.
+    
+    Returns
+    -------
+    dict
+        A dictionary containing the count of files in the file_hashes table.
+    """
+    try:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT COUNT(*) FROM file_hashes")
+            count = row[0] if row else 0
+            return {"count": count}
+    except Exception as e:
+        logger.exception("Error getting file hashes count: %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
         )
