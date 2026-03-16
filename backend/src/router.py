@@ -20,10 +20,10 @@ import asyncpg
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from backend.src.services.document_chunker_service import convert_and_chunk
-from backend.src.services.model_lifecycle_service import ModelLifecycleService
-from backend.src.services.reconciliation_service import ReconciliationService
-from backend.src.services.vector_store_service import (
+from src.services.document_chunker_service import convert_and_chunk
+from src.services.model_lifecycle_service import ModelLifecycleService
+from src.services.reconciliation_service import ReconciliationService
+from src.services.vector_store_service import (
     SearchRequest,
     SearchResponse,
     SearchResultItem,

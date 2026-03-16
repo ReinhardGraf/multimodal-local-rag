@@ -24,8 +24,8 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: create services, warmup models on startup, clean up on shutdown."""
-    from backend.src.services.model_lifecycle_service import ModelLifecycleService
-    from backend.src.services.vector_store_service import VectorStoreService
+    from src.services.model_lifecycle_service import ModelLifecycleService
+    from src.services.vector_store_service import VectorStoreService
 
     log = logging.getLogger(__name__)
 

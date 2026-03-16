@@ -11,11 +11,18 @@
         "chunkTimeout": 900000
       },
       "models": {
-        "qwen3-coder-30b": {
-          "name": "Qwen3 Coder 30B"
+        "gpt-oss:20b": {
+          "name": "gpt-oss-20b"
+        },
+        "qwen3-coder:30b": {
+          "name": "Qwen3 Coder 30B",
+          "_launch": true
+        },
+        "qwen3-coder-next": {
+          "name": "Qwen3 Coder Next"
         }
       }
     }
   },
-  "model": "ollama/qwen3-coder:30b"
+  "model": "ollama/gpt-oss:20b"
 }
