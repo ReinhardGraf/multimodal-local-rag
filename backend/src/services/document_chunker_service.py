@@ -14,7 +14,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Optional
+from typing import Optional, cast
 
 from src.config import settings
 
@@ -24,8 +24,8 @@ from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
     RapidOcrOptions,
 )
-from docling.chunking import HybridChunker
-from docling_core.transforms.chunker import DocChunk
+from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
+from docling_core.transforms.chunker.doc_chunk import DocChunk
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from docling_core.types.doc.document import (
     DoclingDocument,
@@ -213,7 +213,7 @@ def convert_and_chunk(
 
     # 3. Chunk ────────────────────────────────────────────────
     chunker = get_chunker()
-    raw_chunks: list[DocChunk] = list(chunker.chunk(dl_doc=doc))
+    raw_chunks = cast(list[DocChunk], list(chunker.chunk(dl_doc=doc)))
     logger.info("Chunking done — %d structure-based chunks produced", len(raw_chunks))
 
     # 4. Build response ───────────────────────────────────────

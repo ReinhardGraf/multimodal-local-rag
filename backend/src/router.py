@@ -20,16 +20,16 @@ import asyncpg
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from src.services.vector_store_service import VectorStoreService
 from src.services.document_chunker_service import convert_and_chunk
 from src.services.model_lifecycle_service import ModelLifecycleService
 from src.services.reconciliation_service import ReconciliationService
-from src.services.vector_store_service import (
+from src.schemas import (
     SearchRequest,
     SearchResponse,
     SearchResultItem,
     UpsertRequest,
     UpsertResponse,
-    VectorStoreService,
 )
 
 logger = logging.getLogger(__name__)

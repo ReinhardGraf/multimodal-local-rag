@@ -97,7 +97,7 @@ class ReconciliationService:
                 if not points:
                     continue
 
-                payload = points[0].payload
+                payload = points[0].payload or {}
 
                 file_path = payload.get("source")
                 file_size = payload.get("fileSize")

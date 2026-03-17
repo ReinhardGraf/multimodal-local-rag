@@ -15,63 +15,20 @@ import uuid
 from typing import Any, Optional
 
 from src.config import settings
+from src.schemas import (
+    DocumentItem,
+    SearchRequest,
+    SearchResponse,
+    SearchResultItem,
+    UpsertRequest,
+    UpsertResponse,
+)
 
 import httpx
-from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 logger = logging.getLogger(__name__)
-
-# ── Request / response models ────────────────────────────────
-
-
-class DocumentItem(BaseModel):
-    """A single document to embed and upsert."""
-
-    id: Optional[str] = None
-    text: str
-    metadata: Optional[dict[str, Any]] = None
-
-
-class UpsertRequest(BaseModel):
-    """Body for ``POST /v1/vector-store/upsert``."""
-
-    collection_name: Optional[str] = None
-    documents: list[DocumentItem]
-
-
-class UpsertResponse(BaseModel):
-    status: str
-    upserted_count: int
-    collection_name: str
-    processing_time: float
-
-
-class SearchRequest(BaseModel):
-    """Body for ``POST /v1/vector-store/search``."""
-
-    query: str
-    collection_name: Optional[str] = None
-    limit: int = 5
-    score_threshold: Optional[float] = None
-    rerank: bool = False
-    rerank_top_k: Optional[int] = None
-    keywords: Optional[list[str]] = None
-
-
-class SearchResultItem(BaseModel):
-    id: str
-    score: float
-    text: str
-    metadata: dict[str, Any]
-
-
-class SearchResponse(BaseModel):
-    results: list[SearchResultItem]
-    collection_name: str
-    processing_time: float
-    reranked: bool = False
 
 
 # ── Service ──────────────────────────────────────────────────
@@ -158,16 +115,18 @@ class VectorStoreService:
 
     # ── Dense embeddings (Ollama) ────────────────────────────
 
-    async def _get_dense_embeddings(
-        self, texts: list[str]
-    ) -> list[list[float]]:
+    async def _get_dense_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Call Ollama ``/api/embed`` in batches and return dense vectors."""
         all_embeddings: list[list[float]] = []
         for start in range(0, len(texts), _OLLAMA_EMBED_BATCH):
             batch = texts[start : start + _OLLAMA_EMBED_BATCH]
             response = await self.http_client.post(
                 f"{self.ollama_url}/api/embed",
-                json={"model": self.embedding_model, "input": batch, "keep_alive": "10m"},
+                json={
+                    "model": self.embedding_model,
+                    "input": batch,
+                    "keep_alive": "10m",
+                },
             )
             response.raise_for_status()
             all_embeddings.extend(response.json()["embeddings"])
@@ -240,9 +199,7 @@ class VectorStoreService:
 
         # Generate both embedding types
         dense_embeddings = await self._get_dense_embeddings(texts)
-        sparse_embeddings = await asyncio.to_thread(
-            self._get_sparse_embeddings, texts
-        )
+        sparse_embeddings = await asyncio.to_thread(self._get_sparse_embeddings, texts)
 
         # Build Qdrant points
         points: list[qmodels.PointStruct] = []
@@ -264,9 +221,7 @@ class VectorStoreService:
             )
 
         # Batch upsert
-        await asyncio.to_thread(
-            self.qdrant.upsert, collection_name=name, points=points
-        )
+        await asyncio.to_thread(self.qdrant.upsert, collection_name=name, points=points)
         logger.info("Upserted %d points into '%s'", len(points), name)
 
         return len(points)
@@ -351,8 +306,10 @@ class VectorStoreService:
             {
                 "id": str(point.id),
                 "score": point.score,
-                "text": point.payload.get(COLLECTION_TEXT_FIELD, ""),
-                "metadata": {k: v for k, v in point.payload.items() if k != COLLECTION_TEXT_FIELD},
+                "text": (point.payload or {}).get(COLLECTION_TEXT_FIELD, ""),
+                "metadata": {
+                    k: v for k, v in (point.payload or {}).items() if k != COLLECTION_TEXT_FIELD
+                },
             }
             for point in results.points
         ]

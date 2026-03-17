@@ -8,6 +8,7 @@ src/__init__.py
 src/config.py
 src/main.py
 src/router.py
+src/schemas.py
 src/services/document_chunker_service.py
 src/services/model_lifecycle_service.py
 src/services/reconciliation_service.py
@@ -16,4 +17,3 @@ src/services/vector_store_service.py
 tests/test_document_chunker_service.py
 tests/test_reranker_service.py
 tests/test_vector_store_service.py
-tests/test_vector_store_service_real_ollama.py
