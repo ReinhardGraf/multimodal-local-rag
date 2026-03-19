@@ -9,13 +9,17 @@ Run with::
 from __future__ import annotations
 
 import logging
+import traceback
 from contextlib import asynccontextmanager
+from typing import Any
 
 import asyncpg
-from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from src.config import settings
+from src.errors import ErrorResponse
 from src.router import router
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +60,22 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RAG Backend", version="2.0.0", lifespan=lifespan)
 
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions globally."""
+    logging.error(f"Unhandled exception: {exc}\nTraceback:\n{traceback.format_exc()}")
+
+    # Return a sanitized error message (no internal paths, DSNs, or stack traces)
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            error="Internal Server Error", detail="An unexpected error occurred"
+        ),
+    )
+
+
 # Allow the OpenWebUI origin (and localhost dev setups) to call /v1/warmup
 # from browser-side JavaScript.
 app.add_middleware(
@@ -72,3 +92,5 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=5008)
+
+    print("app started :-)")

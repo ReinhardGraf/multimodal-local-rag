@@ -83,28 +83,20 @@ async def chunk_hierarchical_file(
     ``chunking_tokenizer``, and ``chunking_merge_peers`` are accepted for
     API compatibility but are **not** used by this chunker.
     """
-    try:
-        file_bytes = await files.read()
-        filename = files.filename or "upload.pdf"
-        logger.info("Received file: %s (%d bytes)", filename, len(file_bytes))
+    file_bytes = await files.read()
+    filename = files.filename or "upload.pdf"
+    logger.info("Received file: %s (%d bytes)", filename, len(file_bytes))
 
-        result = convert_and_chunk(
-            file_bytes,
-            filename,
-            chunking_include_raw_text=chunking_include_raw_text,
-            include_converted_doc=include_converted_doc,
-            convert_do_ocr=convert_do_ocr,
-            convert_do_table_structure=convert_do_table_structure,
-        )
+    result = convert_and_chunk(
+        file_bytes,
+        filename,
+        chunking_include_raw_text=chunking_include_raw_text,
+        include_converted_doc=include_converted_doc,
+        convert_do_ocr=convert_do_ocr,
+        convert_do_table_structure=convert_do_table_structure,
+    )
 
-        return JSONResponse(content=result)
-
-    except Exception as e:
-        logger.exception("Error processing %s: %s", files.filename, e)
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)},
-        )
+    return JSONResponse(content=result)
 
 
 # ── Vector-store upsert ─────────────────────────────────────
@@ -126,33 +118,22 @@ async def vector_store_upsert(
     t0 = time.time()
     collection = body.collection_name or vector_service.default_collection
 
-    try:
-        # Ensure the target collection has the right schema
-        vector_service.ensure_collection(collection)
+    # Ensure the target collection has the right schema
+    vector_service.ensure_collection(collection)
 
-        count = await vector_service.upsert_documents(
-            documents=body.documents,
-            collection_name=collection,
-        )
+    count = await vector_service.upsert_documents(
+        documents=body.documents,
+        collection_name=collection,
+    )
 
-        lifecycle_service.record_activity()
+    lifecycle_service.record_activity()
 
-        return UpsertResponse(
-            status="ok",
-            upserted_count=count,
-            collection_name=collection,
-            processing_time=round(time.time() - t0, 3),
-        )
-
-    except Exception as e:
-        logger.exception("Upsert failed: %s", e)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": str(e),
-                "processing_time": round(time.time() - t0, 3),
-            },
-        )
+    return UpsertResponse(
+        status="ok",
+        upserted_count=count,
+        collection_name=collection,
+        processing_time=round(time.time() - t0, 3),
+    )
 
 
 # ── Vector-store search ────────────────────────────────────
@@ -174,35 +155,24 @@ async def vector_store_search(
     t0 = time.time()
     collection = body.collection_name or vector_service.default_collection
 
-    try:
-        hits, reranked = await vector_service.search(
-            query=body.query,
-            collection_name=collection,
-            limit=body.limit,
-            score_threshold=body.score_threshold,
-            rerank=body.rerank,
-            rerank_top_k=body.rerank_top_k,
-            keywords=body.keywords,
-        )
+    hits, reranked = await vector_service.search(
+        query=body.query,
+        collection_name=collection,
+        limit=body.limit,
+        score_threshold=body.score_threshold,
+        rerank=body.rerank,
+        rerank_top_k=body.rerank_top_k,
+        keywords=body.keywords,
+    )
 
-        lifecycle_service.record_activity()
+    lifecycle_service.record_activity()
 
-        return SearchResponse(
-            results=[SearchResultItem(**h) for h in hits],
-            collection_name=collection,
-            processing_time=round(time.time() - t0, 3),
-            reranked=reranked,
-        )
-
-    except Exception as e:
-        logger.exception("Search failed: %s", e)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": str(e),
-                "processing_time": round(time.time() - t0, 3),
-            },
-        )
+    return SearchResponse(
+        results=[SearchResultItem(**h) for h in hits],
+        collection_name=collection,
+        processing_time=round(time.time() - t0, 3),
+        reranked=reranked,
+    )
 
 
 # ── Model warmup ────────────────────────────────────────────
@@ -237,39 +207,25 @@ async def health():
 
 @router.post("/v1/reconciliation/file-hash")
 async def file_hash_reconciliation(vector_service: VecDep, pg_pool: PgPoolDep):
-    try:
-        service = ReconciliationService(
-            qdrant_client=vector_service.qdrant,
-            pg_pool=pg_pool,
-        )
-        result = await service.reconcile_file_hashes()
-        return result
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": str(e),
-            },
-        )
+    service = ReconciliationService(
+        qdrant_client=vector_service.qdrant,
+        pg_pool=pg_pool,
+    )
+    result = await service.reconcile_file_hashes()
+    return result
+
 
 @router.get("/v1/file-hashes/count")
 async def get_file_hashes_count(pg_pool: PgPoolDep):
     """
     Get the number of files in the file_hashes table.
-    
+
     Returns
     -------
     dict
         A dictionary containing the count of files in the file_hashes table.
     """
-    try:
-        async with pg_pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT COUNT(*) FROM file_hashes")
-            count = row[0] if row else 0
-            return {"count": count}
-    except Exception as e:
-        logger.exception("Error getting file hashes count: %s", e)
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)},
-        )
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT COUNT(*) FROM file_hashes")
+        count = row[0] if row else 0
+        return {"count": count}
