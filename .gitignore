@@ -22,7 +22,8 @@ docs/
 *.log
 logs/
 
-*backend.egg-info/
+# Python egg-info
+*.egg-info/
 
 # Temporary files
 tmp/

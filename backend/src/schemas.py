@@ -55,3 +55,19 @@ class SearchResponse(BaseModel):
     collection_name: str
     processing_time: float
     reranked: bool = False
+
+
+# ── Table RAG models ─────────────────────────────────────────
+
+
+class TableQueryRequest(BaseModel):
+    """Body for ``POST /v1/tables/query``."""
+
+    user_query: str
+    table_ids: list[str]
+
+
+class TableDeleteRequest(BaseModel):
+    """Body for ``POST /v1/tables/delete-by-source``."""
+
+    source_path: str

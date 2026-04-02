@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # -- Postgres (for reconciliation) ─────────────────────────────────────────
     postgres_dsn: str = "postgresql://n8n:n8n_password@localhost:5436/n8n_rag"
 
+    # ── Table RAG (SQLite + Qdrant) ───────────────────────────────────────
+    sqlite_db_path: str = "/data/tables/tables.db"
+    table_collection_name: str = "tables"
+    # Ollama model for table description & SQL generation
+    ollama_table_model: str = "qwen3:4b-instruct-2507-q4_K_M"
+    # Ollama model for text-to-SQL (when using error feedback)
+    ollama_text_to_sql_model: str = "qwen3-coder:30b"
+
     # ── HuggingFace Hub ───────────────────────────────────────────────────
     # Set to True (or export HF_HUB_OFFLINE=1) after initial model download
     # to prevent any outbound calls to the HuggingFace Hub.

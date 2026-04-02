@@ -21,6 +21,7 @@ dependencies = [
     "python-multipart",
     "transformers",  # explicit: used for tokenizer-aware HybridChunker init
     "sentence-transformers",  # CrossEncoder for reranking
+    "openpyxl",  # Excel parsing for table RAG
 ]
 
 [project.optional-dependencies]

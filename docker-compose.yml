@@ -99,6 +99,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
     volumes:
       - ${DOCUMENTS_PATH:-./documents}:/data/documents:ro
+      - table_data:/data/tables
     networks:
       - rag-network
     depends_on:
@@ -140,3 +141,4 @@ volumes:
   qdrant_data:
   ollama_data:
   open_webui_data:
+  table_data:

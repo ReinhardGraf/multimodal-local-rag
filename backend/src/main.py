@@ -30,15 +30,18 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan: create services, warmup models on startup, clean up on shutdown."""
     from src.services.model_lifecycle_service import ModelLifecycleService
     from src.services.vector_store_service import VectorStoreService
+    from src.services.table_store_service import TableStoreService
 
     log = logging.getLogger(__name__)
 
-    # ── Create shared service instances ──────────────────────
+    # ── Create shared service instances ──────────────────────────
     vec = VectorStoreService()
+    table = TableStoreService()
     lc = ModelLifecycleService(vec_store=vec, reranker=vec.reranker)
     pg_pool = await asyncpg.create_pool(dsn=settings.postgres_dsn)
 
     app.state.vector_service = vec
+    app.state.table_service = table
     app.state.lifecycle = lc
     app.state.pg_pool = pg_pool
 
@@ -54,6 +57,7 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ─────────────────────────────────────────────
     lc.stop_watcher()
     await vec.close()
+    await table.close()
     await pg_pool.close()
     log.info("FastAPI shutdown — all resources released")
 
