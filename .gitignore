@@ -15,9 +15,14 @@
 # Node modules (if any local development)
 node_modules/
 
+data/
+docs/
+
 # Logs
 *.log
 logs/
+
+*backend.egg-info/
 
 # Temporary files
 tmp/
