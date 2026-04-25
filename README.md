@@ -35,6 +35,15 @@ Documents are automatically processed through a pipeline:
 | **Ollama** | Local LLM inference (Qwen3-4B Instruct) | 11434 |
 | **Open WebUI** | Chat interface | 3000 |
 
+## Documentation
+
+See [`docs/`](./docs/) for detailed guides:
+
+- [Start & Stop](./docs/01_start-stop.md) — Daily operations
+- [Architecture](./docs/02_architektur.md) — System design
+- [Customer Narrative](./docs/03_kunden-narrativ.md) — Sales talking points
+- [Troubleshooting](./docs/04_troubleshooting.md) — Common issues
+
 ## Setup
 
 ### Prerequisites
