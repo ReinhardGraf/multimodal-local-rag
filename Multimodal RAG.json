@@ -1903,7 +1903,7 @@
           "parameters": [
             {
               "name": "model",
-              "value": "qwen2.5-coder:1.5b-base"
+              "value": "qwen3:4b-instruct-2507-q4_K_M"
             },
             {
               "name": "prompt",

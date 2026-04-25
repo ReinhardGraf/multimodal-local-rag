@@ -95,7 +95,8 @@ class TableStoreService:
         return conn
 
     def _ensure_db(self) -> None:
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        import os
+        self.db_path = Path(os.getenv("DATA_DIR", "./data") + "/docling_data.db")
         conn = self._get_conn()
         try:
             conn.execute(
