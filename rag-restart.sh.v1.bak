@@ -3,13 +3,9 @@
 #  rag-restart.sh – Multimodal Local RAG Orchestrator
 # ----------------------------------------------------------------------
 #  Steuert Reinhards lokalen RAG-Stack:
-#    • Native Ollama (Mac, Metal-GPU) mit Flash Attention + KV-Cache q8_0
+#    • Native Ollama (Mac, Metal-GPU)
 #    • Docker-Stack (n8n, postgres, qdrant, open-webui)
 #    • Natives FastAPI-Backend (in eigenem Terminal-Tab)
-#
-#  Performance-Modi (ab v2):
-#    OLLAMA_FLASH_ATTENTION=1   → Flash Attention 2 (~20-30% schneller)
-#    OLLAMA_KV_CACHE_TYPE=q8_0  → KV-Cache 8-Bit (~50% weniger VRAM für Context)
 #
 #  Usage:
 #    ./rag-restart.sh             Voller Neustart (Standard)
@@ -33,11 +29,6 @@ EMBED_MODEL="qllama/multilingual-e5-large-instruct:latest"
 BACKEND_DIR="${REPO_DIR}/backend"
 BACKEND_PORT="5008"
 BACKEND_CMD="uv run uvicorn src.main:app --reload --port ${BACKEND_PORT}"
-
-# Performance-Schalter für Ollama (ab Ollama 0.21.x)
-# Per Umgebungsvariable überschreibbar, falls jemand sie deaktivieren möchte.
-OLLAMA_FLASH_ATTENTION="${OLLAMA_FLASH_ATTENTION:-1}"
-OLLAMA_KV_CACHE_TYPE="${OLLAMA_KV_CACHE_TYPE:-q8_0}"
 
 # ---------- Farben ------------------------------------------------------
 if [[ -t 1 ]]; then
@@ -147,19 +138,9 @@ stop_backend() {
 
 # ---------- Schritt 4: Ollama nativ starten ----------------------------
 start_ollama() {
-    step "Natives Ollama starten (mit Performance-Schaltern)"
-    info "OLLAMA_KEEP_ALIVE=-1 (Modelle bleiben dauerhaft warm)"
-    info "OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION} (Flash Attention 2)"
-    info "OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE} (KV-Cache-Quantisierung)"
-
+    step "Natives Ollama starten (mit OLLAMA_KEEP_ALIVE=-1)"
     launchctl setenv OLLAMA_KEEP_ALIVE -1
-    launchctl setenv OLLAMA_FLASH_ATTENTION "${OLLAMA_FLASH_ATTENTION}"
-    launchctl setenv OLLAMA_KV_CACHE_TYPE "${OLLAMA_KV_CACHE_TYPE}"
-
-    OLLAMA_KEEP_ALIVE=-1 \
-    OLLAMA_FLASH_ATTENTION="${OLLAMA_FLASH_ATTENTION}" \
-    OLLAMA_KV_CACHE_TYPE="${OLLAMA_KV_CACHE_TYPE}" \
-        nohup ollama serve >> "${HOME}/ollama.log" 2>&1 &
+    OLLAMA_KEEP_ALIVE=-1 nohup ollama serve >> "${HOME}/ollama.log" 2>&1 &
     disown
     sleep 2
     wait_for_port localhost 11434 15 "Ollama-Server"
@@ -260,12 +241,6 @@ show_status() {
     printf "\n${C_BOLD}Ollama-Modelle:${C_RESET}\n"
     if pgrep -x ollama >/dev/null; then
         ollama ps 2>/dev/null || warn "ollama ps fehlgeschlagen"
-        printf "\n${C_BOLD}Performance-Modus:${C_RESET}\n"
-        local fa kv
-        fa=$(launchctl getenv OLLAMA_FLASH_ATTENTION 2>/dev/null || echo "nicht gesetzt")
-        kv=$(launchctl getenv OLLAMA_KV_CACHE_TYPE 2>/dev/null || echo "nicht gesetzt")
-        printf "  Flash Attention:  ${C_GREEN}%s${C_RESET}\n" "$fa"
-        printf "  KV-Cache-Type:    ${C_GREEN}%s${C_RESET}\n" "$kv"
     else
         warn "Ollama läuft nicht"
     fi
