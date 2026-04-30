@@ -16,7 +16,6 @@
 #    ./rag-restart.sh --status    Nur Status anzeigen
 #    ./rag-restart.sh --stop      Alles sauber runterfahren
 #    ./rag-restart.sh --no-backend  Backend nicht automatisch starten
-#    ./rag-restart.sh --pull-models Fehlende Ollama-Modelle automatisch ziehen
 #    ./rag-restart.sh --help      Diese Hilfe anzeigen
 # ======================================================================
 
@@ -28,18 +27,8 @@ COMPOSE_FILE="docker-compose.dev.yml"
 LOG_FILE="${HOME}/rag-restart.log"
 
 OLLAMA_HOST="http://localhost:11434"
-# Modelle passend zur verbesserten n8n-Workflow-JSON.
-# Per Umgebungsvariable überschreibbar, z.B. QA_MODEL=qwen3:8b ./rag-restart.sh
-ROUTER_MODEL="${ROUTER_MODEL:-qwen3:4b-instruct-2507-q4_K_M}"
-QA_MODEL="${QA_MODEL:-qwen3:14b}"
-VISION_MODEL="${VISION_MODEL:-qwen2.5vl}"
-
-# Nicht blind auf bge-m3 umgestellt: Ein Embedding-Wechsel erfordert Re-Indexing
-# und muss zur Qdrant-Vektordimension passen.
-EMBED_MODEL="${EMBED_MODEL:-qllama/multilingual-e5-large-instruct:latest}"
-RERANKER_MODEL="${RERANKER_MODEL:-qllama/bge-reranker-v2-m3:q4_k_m}"
-
-AUTO_PULL_MODELS="${AUTO_PULL_MODELS:-0}"
+LLM_MODEL="qwen3:4b-instruct-2507-q4_K_M"
+EMBED_MODEL="qllama/multilingual-e5-large-instruct:latest"
 
 BACKEND_DIR="${REPO_DIR}/backend"
 BACKEND_PORT="5008"
@@ -90,49 +79,6 @@ wait_for_port() {
         sleep 1
     done
     ok "${name} bereit (${host}:${port})"
-}
-
-ollama_model_exists() {
-    local model="$1"
-    ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -Fxq "$model"
-}
-
-ensure_ollama_model() {
-    local model="$1"
-    if ollama_model_exists "$model"; then
-        ok "Modell vorhanden: $model"
-        return 0
-    fi
-
-    if [[ "$AUTO_PULL_MODELS" == "1" ]]; then
-        warn "Modell fehlt, ziehe via Ollama: $model"
-        ollama pull "$model"
-        ok "Modell installiert: $model"
-    else
-        warn "Modell fehlt: $model"
-        info "  Nachinstallieren: ollama pull $model"
-        return 1
-    fi
-}
-
-warmup_generate_model() {
-    local model="$1"
-    info "Lade Generate-Modell: ${model}"
-    curl -fsS "${OLLAMA_HOST}/api/generate" \
-        -H "Content-Type: application/json" \
-        -d "{\"model\":\"${model}\",\"prompt\":\"warmup\",\"stream\":false,\"keep_alive\":-1,\"options\":{\"num_predict\":1}}" \
-        >/dev/null
-    ok "${model} vorgeladen"
-}
-
-warmup_embedding_model() {
-    local model="$1"
-    info "Lade Embedding-Modell: ${model}"
-    curl -fsS "${OLLAMA_HOST}/api/embeddings" \
-        -H "Content-Type: application/json" \
-        -d "{\"model\":\"${model}\",\"prompt\":\"warmup\",\"keep_alive\":-1}" \
-        >/dev/null
-    ok "${model} vorgeladen"
 }
 
 # ---------- Schritt 1: Docker-Stack stoppen -----------------------------
@@ -219,26 +165,21 @@ start_ollama() {
     wait_for_port localhost 11434 15 "Ollama-Server"
 }
 
-# ---------- Schritt 5: Modelle prüfen und vorladen ----------------------
+# ---------- Schritt 5: Modelle vorladen --------------------------------
 preload_models() {
-    step "Modelle prüfen und vorladen (keep_alive: -1)"
+    step "Modelle vorladen (keep_alive: -1)"
 
-    local missing=0
-    ensure_ollama_model "$ROUTER_MODEL" || missing=1
-    ensure_ollama_model "$QA_MODEL" || missing=1
-    ensure_ollama_model "$VISION_MODEL" || missing=1
-    ensure_ollama_model "$EMBED_MODEL" || missing=1
-    ensure_ollama_model "$RERANKER_MODEL" || true
+    info "Lade LLM: ${LLM_MODEL}"
+    curl -sS "${OLLAMA_HOST}/api/generate" \
+        -d "{\"model\":\"${LLM_MODEL}\",\"keep_alive\":-1}" \
+        >/dev/null
+    ok "${LLM_MODEL} vorgeladen"
 
-    if (( missing )); then
-        err "Ein oder mehrere Pflichtmodelle fehlen. Starte mit --pull-models oder installiere sie manuell."
-        return 1
-    fi
-
-    warmup_generate_model "$ROUTER_MODEL"
-    warmup_generate_model "$QA_MODEL"
-    warmup_generate_model "$VISION_MODEL"
-    warmup_embedding_model "$EMBED_MODEL"
+    info "Lade Embedding: ${EMBED_MODEL}"
+    curl -sS "${OLLAMA_HOST}/api/embeddings" \
+        -d "{\"model\":\"${EMBED_MODEL}\",\"prompt\":\"warmup\",\"keep_alive\":-1}" \
+        >/dev/null
+    ok "${EMBED_MODEL} vorgeladen"
 }
 
 # ---------- Schritt 6: Docker-Stack starten ----------------------------
@@ -319,12 +260,6 @@ show_status() {
     printf "\n${C_BOLD}Ollama-Modelle:${C_RESET}\n"
     if pgrep -x ollama >/dev/null; then
         ollama ps 2>/dev/null || warn "ollama ps fehlgeschlagen"
-        printf "\n${C_BOLD}Konfigurierte Modelle:${C_RESET}\n"
-        printf "  Router:     ${C_GREEN}%s${C_RESET}\n" "$ROUTER_MODEL"
-        printf "  QA:         ${C_GREEN}%s${C_RESET}\n" "$QA_MODEL"
-        printf "  Vision:     ${C_GREEN}%s${C_RESET}\n" "$VISION_MODEL"
-        printf "  Embedding:  ${C_GREEN}%s${C_RESET}\n" "$EMBED_MODEL"
-        printf "  Reranker:   ${C_GREEN}%s${C_RESET}\n" "$RERANKER_MODEL"
         printf "\n${C_BOLD}Performance-Modus:${C_RESET}\n"
         local fa kv
         fa=$(launchctl getenv OLLAMA_FLASH_ATTENTION 2>/dev/null || echo "nicht gesetzt")
@@ -360,7 +295,7 @@ show_status() {
 
 # ---------- Main --------------------------------------------------------
 usage() {
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -372,7 +307,6 @@ main() {
             --status)      mode="status" ;;
             --stop)        mode="stop" ;;
             --no-backend)  start_backend="no" ;;
-            --pull-models) AUTO_PULL_MODELS=1 ;;
             --help|-h)     usage; exit 0 ;;
             *) err "Unbekanntes Argument: $arg"; usage; exit 1 ;;
         esac
@@ -384,7 +318,7 @@ main() {
     require_cmd nc
 
     printf "${C_BOLD}━━━ Multimodal RAG – %s ━━━${C_RESET}\n" "$(echo "$mode" | tr "[:lower:]" "[:upper:]")"
-    log "=== Run started: mode=${mode} backend=${start_backend} auto_pull=${AUTO_PULL_MODELS} ==="
+    log "=== Run started: mode=${mode} backend=${start_backend} ==="
 
     case "$mode" in
         status)
