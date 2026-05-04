@@ -30,9 +30,10 @@ LOG_FILE="${HOME}/rag-restart.log"
 OLLAMA_HOST="http://localhost:11434"
 # Modelle passend zur verbesserten n8n-Workflow-JSON.
 # Per Umgebungsvariable überschreibbar, z.B. QA_MODEL=qwen3:8b ./rag-restart.sh
+# Vision ist in Ollama lokal typischerweise als qwen2.5vl:latest installiert.
 ROUTER_MODEL="${ROUTER_MODEL:-qwen3:4b-instruct-2507-q4_K_M}"
 QA_MODEL="${QA_MODEL:-qwen3:14b}"
-VISION_MODEL="${VISION_MODEL:-qwen2.5vl}"
+VISION_MODEL="${VISION_MODEL:-qwen2.5vl:latest}"
 
 # Nicht blind auf bge-m3 umgestellt: Ein Embedding-Wechsel erfordert Re-Indexing
 # und muss zur Qdrant-Vektordimension passen.
@@ -97,20 +98,52 @@ ollama_model_exists() {
     ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -Fxq "$model"
 }
 
-ensure_ollama_model() {
+resolve_ollama_model() {
     local model="$1"
     if ollama_model_exists "$model"; then
-        ok "Modell vorhanden: $model"
+        printf '%s\n' "$model"
+        return 0
+    fi
+
+    # Wenn kein Tag angegeben ist, akzeptiere ein lokal installiertes :latest.
+    if [[ "$model" != *:* ]]; then
+        local latest_model="${model}:latest"
+        if ollama_model_exists "$latest_model"; then
+            printf '%s\n' "$latest_model"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+ensure_ollama_model() {
+    local model="$1"
+    local resolved=""
+    RESOLVED_MODEL=""
+
+    if resolved="$(resolve_ollama_model "$model")"; then
+        RESOLVED_MODEL="$resolved"
+        if [[ "$resolved" == "$model" ]]; then
+            ok "Modell vorhanden: $model"
+        else
+            ok "Modell vorhanden: $model (verwende $resolved)"
+        fi
         return 0
     fi
 
     if [[ "$AUTO_PULL_MODELS" == "1" ]]; then
         warn "Modell fehlt, ziehe via Ollama: $model"
         ollama pull "$model"
+        RESOLVED_MODEL="$model"
         ok "Modell installiert: $model"
     else
         warn "Modell fehlt: $model"
-        info "  Nachinstallieren: ollama pull $model"
+        if [[ "$model" != *:* ]]; then
+            info "  Nachinstallieren: ollama pull ${model}:latest"
+        else
+            info "  Nachinstallieren: ollama pull $model"
+        fi
         return 1
     fi
 }
@@ -224,10 +257,23 @@ preload_models() {
     step "Modelle prüfen und vorladen (keep_alive: -1)"
 
     local missing=0
+    local router_model="$ROUTER_MODEL"
+    local qa_model="$QA_MODEL"
+    local vision_model="$VISION_MODEL"
+    local embed_model="$EMBED_MODEL"
+
     ensure_ollama_model "$ROUTER_MODEL" || missing=1
+    [[ -n "${RESOLVED_MODEL:-}" ]] && router_model="$RESOLVED_MODEL"
+
     ensure_ollama_model "$QA_MODEL" || missing=1
+    [[ -n "${RESOLVED_MODEL:-}" ]] && qa_model="$RESOLVED_MODEL"
+
     ensure_ollama_model "$VISION_MODEL" || missing=1
+    [[ -n "${RESOLVED_MODEL:-}" ]] && vision_model="$RESOLVED_MODEL"
+
     ensure_ollama_model "$EMBED_MODEL" || missing=1
+    [[ -n "${RESOLVED_MODEL:-}" ]] && embed_model="$RESOLVED_MODEL"
+
     ensure_ollama_model "$RERANKER_MODEL" || true
 
     if (( missing )); then
@@ -235,15 +281,19 @@ preload_models() {
         return 1
     fi
 
-    warmup_generate_model "$ROUTER_MODEL"
-    warmup_generate_model "$QA_MODEL"
-    warmup_generate_model "$VISION_MODEL"
-    warmup_embedding_model "$EMBED_MODEL"
+    warmup_generate_model "$router_model"
+    warmup_generate_model "$qa_model"
+    warmup_generate_model "$vision_model"
+    warmup_embedding_model "$embed_model"
 }
 
 # ---------- Schritt 6: Docker-Stack starten ----------------------------
 start_docker_stack() {
     step "Docker-Stack starten (${COMPOSE_FILE})"
+    if ! docker info >/dev/null 2>&1; then
+        err "Docker-Daemon läuft nicht. Bitte Docker Desktop starten und dann ./rag-restart.sh erneut ausführen."
+        return 1
+    fi
     cd "$REPO_DIR"
     docker compose -f "$COMPOSE_FILE" up -d
     ok "Container gestartet"
