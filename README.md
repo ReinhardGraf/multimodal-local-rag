@@ -76,6 +76,24 @@ Use `docker-compose.yml`. All containers communicate over the internal `rag-netw
 
 Use this when you want to run the Backend and Ollama natively on your host (e.g. on macOS to access the GPU directly):
 
+Recommended on macOS:
+
+```bash
+./rag-restart.sh
+```
+
+This script:
+
+- stops old backend, Docker, and Ollama processes
+- starts Ollama with the local performance flags
+- checks and preloads the configured router, QA, vision, and embedding models
+- starts the Docker dev stack from `docker-compose.dev.yml`
+- opens the backend command in a new terminal tab when possible
+
+If Docker Desktop is not running yet, start it first and then rerun `./rag-restart.sh`.
+
+Manual alternative:
+
 ```bash
 docker compose -f docker-compose.dev.yml up -d
 ```
@@ -88,8 +106,7 @@ ollama serve
 
 # Start the Backend
 cd backend
-pip install -e .
-uvicorn src.main:app --host 0.0.0.0 --port 5008
+uv run uvicorn src.main:app --reload --port 5008
 ```
 
 In dev mode, update your `.env` to point containers at the host:

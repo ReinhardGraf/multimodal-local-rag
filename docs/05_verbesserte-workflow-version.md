@@ -58,7 +58,7 @@ Grund: Routing soll schnell bleiben; Antwortgenerierung, Quellenlogik und deutsc
 Bei der Ingestion wird jedes extrahierte Bild zusaetzlich lokal mit einem Vision-Modell beschrieben:
 
 ```text
-qwen2.5vl
+qwen2.5vl:latest
 ```
 
 Die Bildbeschreibung wird direkt in den Embedding-Text geschrieben. Dadurch kann die spaetere Suche Bilder nicht nur ueber Captions oder Umgebungstext finden, sondern ueber sichtbare Inhalte wie:
@@ -137,7 +137,7 @@ Das Restart-Skript ist nun auf die neue Workflow-Variante abgestimmt.
 |---|---|
 | Router | `qwen3:4b-instruct-2507-q4_K_M` |
 | QA | `qwen3:14b` |
-| Vision | `qwen2.5vl` |
+| Vision | `qwen2.5vl:latest` |
 | Embedding | `qllama/multilingual-e5-large-instruct:latest` |
 | Reranker | `qllama/bge-reranker-v2-m3:q4_k_m` |
 
@@ -284,7 +284,7 @@ Echte Text-zu-Bild-Vektorsuche mit CLIP/Jina-CLIP waere ein weiterer Ausbauschri
 ## Naechste Schritte
 
 - [ ] Neue Workflow-JSON in n8n importieren und als Testworkflow aktivieren
-- [ ] `qwen3:14b` und `qwen2.5vl` per `./rag-restart.sh --pull-models` installieren
+- [ ] `qwen3:14b` und `qwen2.5vl:latest` per `./rag-restart.sh --pull-models` installieren
 - [ ] Docker Desktop starten und Docker-Fehler verifizieren
 - [ ] Einen kleinen PDF-Testbestand neu ingestieren
 - [ ] Bildfragen gegen alte und neue Workflow-Version vergleichen

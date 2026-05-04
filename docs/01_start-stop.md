@@ -30,9 +30,9 @@ cd ~/02_Zweites_Gehirn/Repos/multimodal-local-rag
 Startet automatisch:
 
 1. Natives Ollama (mit `keep_alive: -1`)
-2. Beide Modelle vorgeladen (qwen3 + multilingual-e5)
+2. Router-, QA-, Vision- und Embedding-Modelle werden geprüft und vorgeladen
 3. Docker-Stack: Postgres, Qdrant, n8n, Open WebUI
-4. Backend-Befehl ausgegeben (manuell zu starten in VS Code)
+4. Backend-Start in neuem Terminal-Tab, wenn das Terminal das unterstützt
 
 ### Backend manuell starten
 
@@ -51,9 +51,9 @@ uv run uvicorn src.main:app --reload --port 5008
 
 Zeigt:
 
-- Ollama-Modelle (Forever?)
-- Docker-Container (running?)
-- Backend (uvicorn-Prozess?)
+- geladene Ollama-Modelle
+- Docker-Container
+- Backend-Prozess
 - Alle Endpoints
 
 ### Herunterfahren
@@ -98,6 +98,7 @@ sudo shutdown -h now
 | `./rag-restart.sh --status` | Nur Status anzeigen |
 | `./rag-restart.sh --stop` | Sauber runterfahren |
 | `./rag-restart.sh --no-backend` | Restart ohne Backend-Tab |
+| `./rag-restart.sh --pull-models` | Fehlende Ollama-Modelle automatisch ziehen |
 | `./rag-restart.sh --help` | Hilfe anzeigen |
 
 ---
@@ -129,13 +130,15 @@ Nach einem Mac-Neustart:
 ## Schnell-Verifikation nach Start
 
 ```bash
-ollama ps                              # Beide Modelle "Forever"?
+ollama ps                              # Konfigurierte Modelle geladen?
 docker ps                              # 4 Container "Up"?
 curl -s http://localhost:5008/health   # Backend antwortet?
 curl -s http://localhost:3000/api/version  # Open WebUI antwortet?
 ```
 
 Alle vier Befehle sollten Daten liefern, kein Fehler.
+
+Wenn `./rag-restart.sh` beim Docker-Schritt abbricht, läuft meist Docker Desktop noch nicht.
 
 ---
 
