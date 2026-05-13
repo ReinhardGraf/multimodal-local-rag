@@ -80,6 +80,18 @@ require_cmd() {
     fi
 }
 
+ollama_live_pids() {
+    ps -axo pid=,stat=,command= | awk '
+        /\/Applications\/Ollama\.app\/Contents\/MacOS\/Ollama/ ||
+        /\/Applications\/Ollama\.app\/Contents\/Resources\/ollama serve/ ||
+        /\/Applications\/Ollama\.app\/Contents\/Resources\/ollama runner/ ||
+        /(^|[[:space:]])ollama serve([[:space:]]|$)/ ||
+        /(^|[[:space:]])ollama runner([[:space:]]|$)/ {
+            if ($2 !~ /Z|E/) print $1
+        }
+    '
+}
+
 wait_for_port() {
     local host="$1" port="$2" timeout="${3:-30}" name="${4:-service}"
     local start=$SECONDS
@@ -188,23 +200,49 @@ stop_docker_stack() {
 stop_ollama() {
     step "Natives Ollama beenden"
     local pids
-    pids=$(pgrep -x ollama || true)
+    pids="$(ollama_live_pids)"
     if [[ -z "$pids" ]]; then
         info "Ollama läuft nicht"
         return 0
     fi
     info "Beende Ollama-Prozesse: $pids"
+
+    if command -v osascript >/dev/null 2>&1; then
+        osascript -e 'tell application "Ollama" to quit' >/dev/null 2>&1 || true
+    fi
+
     # shellcheck disable=SC2086
     kill $pids 2>/dev/null || true
-    sleep 2
-    pids=$(pgrep -x ollama || true)
+
+    local waited=0
+    while (( waited < 10 )); do
+        sleep 1
+        pids="$(ollama_live_pids)"
+        if [[ -z "$pids" ]] && ! nc -z localhost 11434 2>/dev/null; then
+            ok "Ollama beendet"
+            return 0
+        fi
+        waited=$((waited + 1))
+    done
+
     if [[ -n "$pids" ]]; then
         warn "Erzwinge Beenden (kill -9)"
         # shellcheck disable=SC2086
         kill -9 $pids 2>/dev/null || true
-        sleep 1
     fi
-    if pgrep -x ollama >/dev/null; then
+
+    waited=0
+    while (( waited < 5 )); do
+        sleep 1
+        pids="$(ollama_live_pids)"
+        if [[ -z "$pids" ]] && ! nc -z localhost 11434 2>/dev/null; then
+            ok "Ollama beendet"
+            return 0
+        fi
+        waited=$((waited + 1))
+    done
+
+    if [[ -n "$(ollama_live_pids)" ]] || nc -z localhost 11434 2>/dev/null; then
         err "Ollama lässt sich nicht beenden"
         return 1
     fi
@@ -343,12 +381,10 @@ EOF
             osascript <<EOF
 tell application "Terminal"
     activate
-    tell application "System Events" to keystroke "t" using command down
-    delay 0.5
-    do script "${cmd}" in front window
+    do script "${cmd}"
 end tell
 EOF
-            ok "Backend-Tab in Terminal.app geöffnet"
+            ok "Backend-Fenster in Terminal.app geöffnet"
             ;;
         vscode)
             warn "VS Code Terminal erkannt – kann keinen neuen Tab öffnen"
