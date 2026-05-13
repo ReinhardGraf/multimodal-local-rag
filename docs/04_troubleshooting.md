@@ -34,7 +34,7 @@ curl http://localhost:11434/api/generate -d '{
 }'
 
 curl http://localhost:11434/api/embeddings -d '{
-  "model": "qllama/multilingual-e5-large-instruct:latest",
+  "model": "qllama/multilingual-e5-large-instruct",
   "prompt": "warmup",
   "keep_alive": -1
 }'

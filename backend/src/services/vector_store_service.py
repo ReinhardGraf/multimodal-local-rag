@@ -2,7 +2,7 @@
 Vector-store service — generates dense + sparse embeddings and upserts
 point batches into a Qdrant collection.
 
-Dense vectors : Ollama  ``qllama/multilingual-e5-large-instruct:latest``
+Dense vectors : Ollama  ``qllama/multilingual-e5-large-instruct``
 Sparse vectors: fastembed ``Qdrant/bm25``  (language-agnostic BM25 that
                 handles German compound words well via subword tokenisation)
 """

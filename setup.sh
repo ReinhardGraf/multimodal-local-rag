@@ -27,7 +27,7 @@ fi
 : ${OPEN_WEBUI_PORT:=3000}
 : ${POSTGRES_USER:=n8n}
 : ${POSTGRES_DB:=n8n_rag}
-: ${OLLAMA_MODELS:="qwen3:4b-instruct-2507-q4_K_M,qllama/multilingual-e5-large-instruct:latest"}
+: ${OLLAMA_MODELS:="qwen3:4b-instruct-2507-q4_K_M,qllama/multilingual-e5-large-instruct"}
 : ${QDRANT_COLLECTION_NAME:=documents}
 : ${EMBEDDING_DIMENSION:=1024}
 
@@ -298,8 +298,8 @@ print_summary() {
     echo "  • Embedding Dimension: ${EMBEDDING_DIMENSION}"
     echo "  • PostgreSQL DB: ${POSTGRES_DB}"
     echo ""
-    echo "Credentials (from .env):"
-    echo "  • n8n: ${N8N_BASIC_AUTH_USER} / [see .env]"
+    echo "Credentials:"
+    echo "  • n8n: create the owner account in the UI on first login"
     echo "  • PostgreSQL: ${POSTGRES_USER} / [see .env]"
     echo ""
     echo "Next Steps:"

@@ -30,14 +30,14 @@ LOG_FILE="${HOME}/rag-restart.log"
 OLLAMA_HOST="http://localhost:11434"
 # Modelle passend zur verbesserten n8n-Workflow-JSON.
 # Per Umgebungsvariable überschreibbar, z.B. QA_MODEL=qwen3:8b ./rag-restart.sh
-# Vision ist in Ollama lokal typischerweise als qwen2.5vl:latest installiert.
+# Vision wird lokal meist als Standard-Tag fuer qwen2.5vl installiert.
 ROUTER_MODEL="${ROUTER_MODEL:-qwen3:4b-instruct-2507-q4_K_M}"
 QA_MODEL="${QA_MODEL:-qwen3:14b}"
-VISION_MODEL="${VISION_MODEL:-qwen2.5vl:latest}"
+VISION_MODEL="${VISION_MODEL:-qwen2.5vl}"
 
 # Nicht blind auf bge-m3 umgestellt: Ein Embedding-Wechsel erfordert Re-Indexing
 # und muss zur Qdrant-Vektordimension passen.
-EMBED_MODEL="${EMBED_MODEL:-qllama/multilingual-e5-large-instruct:latest}"
+EMBED_MODEL="${EMBED_MODEL:-qllama/multilingual-e5-large-instruct}"
 RERANKER_MODEL="${RERANKER_MODEL:-qllama/bge-reranker-v2-m3:q4_k_m}"
 
 AUTO_PULL_MODELS="${AUTO_PULL_MODELS:-0}"
@@ -105,7 +105,7 @@ resolve_ollama_model() {
         return 0
     fi
 
-    # Wenn kein Tag angegeben ist, akzeptiere ein lokal installiertes :latest.
+    # Wenn kein Tag angegeben ist, akzeptiere das lokal installierte Standard-Tag.
     if [[ "$model" != *:* ]]; then
         local latest_model="${model}:latest"
         if ollama_model_exists "$latest_model"; then
@@ -140,7 +140,7 @@ ensure_ollama_model() {
     else
         warn "Modell fehlt: $model"
         if [[ "$model" != *:* ]]; then
-            info "  Nachinstallieren: ollama pull ${model}:latest"
+            info "  Nachinstallieren: ollama pull ${model}"
         else
             info "  Nachinstallieren: ollama pull $model"
         fi

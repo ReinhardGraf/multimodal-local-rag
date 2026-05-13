@@ -60,6 +60,8 @@ cp .env.example .env
 # Edit .env to adjust passwords, ports, or model choices
 ```
 
+When you open n8n for the first time, create the owner account in the UI using an email address and password.
+
 ### 2. Choose your Docker Compose mode
 
 #### Production (everything in Docker)
@@ -133,9 +135,10 @@ This will:
 ### 4. Import the n8n workflow
 
 1. Open n8n at `http://localhost:5678`
-2. Go to **Workflows → Import**
-3. Import `Multimodal RAG.json`
-4. Configure credentials for Ollama, Qdrant, and PostgreSQL
+2. If prompted, create your n8n owner account in the signup screen
+3. Go to **Workflows → Import**
+4. Import `Multimodal RAG.json`
+5. Configure credentials for Ollama, Qdrant, and PostgreSQL
 
 ### 5. Add documents
 

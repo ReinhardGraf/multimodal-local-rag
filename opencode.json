@@ -1,28 +1,24 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "ollama": {
-      "name": "Ollama",
+    "lmstudio": {
       "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio (local)",
       "options": {
-        "baseURL": "http://localhost:11434/v1",
-        "apiKey": "ollama",
-        "timeout": false,
-        "chunkTimeout": 900000
+        "baseURL": "http://127.0.0.1:1234/v1",
+        "apiKey": "lmstudio"
       },
       "models": {
-        "gpt-oss:20b": {
-          "name": "gpt-oss-20b"
+        "openai/gpt-oss-20b": {
+          "name": "GPT-OSS 20B",
+          "tool_call": true
         },
-        "qwen3:30b": {
-          "name": "Qwen3 30B",
-          "_launch": true
-        },
-        "qwen3-coder-next": {
-          "name": "Qwen3 Coder Next"
+        "qwen/qwen3.6-27b": {
+          "name": "Qwen 3.6 27B (no tools)",
+          "tool_call": false
         }
       }
     }
   },
-  "model": "ollama/qwen3:30b"
+  "model": "lmstudio/openai/gpt-oss-20b"
 }

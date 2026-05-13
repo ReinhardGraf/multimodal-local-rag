@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection_name: str = "documents"
     # Ollama embedding model
-    embedding_model: str = "qllama/multilingual-e5-large-instruct:latest"
+    embedding_model: str = "qllama/multilingual-e5-large-instruct"
     # Vector dimension (must match the embedding model output)
     embedding_dimension: int = 1024
     # Number of texts to embed per Ollama /api/embed request
